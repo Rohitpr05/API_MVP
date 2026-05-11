@@ -1,0 +1,50 @@
+{
+  "name": "json-extraction-api-rapidapi",
+  "version": "1.0.0",
+  "description": "RapidAPI marketplace API - Extract structured data from any website using AI + Playwright",
+  "type": "module",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js",
+    "build": "echo 'No build step required for Node.js'",
+    "lint": "eslint src --ext .js",
+    "lint:fix": "eslint src --ext .js --fix",
+    "format": "prettier --write \"src/**/*.js\"",
+    "format:check": "prettier --check \"src/**/*.js\"",
+    "test": "echo 'Test suite not yet implemented'"
+  },
+  "keywords": [
+    "api",
+    "fastify",
+    "json-extraction",
+    "rapidapi",
+    "marketplace",
+    "ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@fastify/cors": "^8.5.0",
+    "@fastify/helmet": "^11.1.1",
+    "@fastify/swagger": "^8.15.0",
+    "@fastify/swagger-ui": "^1.10.2",
+    "dotenv": "^16.3.1",
+    "fastify": "^4.27.0",
+    "openai": "^4.24.7",
+    "pino": "^8.17.2",
+    "pino-pretty": "^10.3.1",
+    "playwright": "^1.40.1",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.5",
+    "eslint": "^8.56.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.0.1",
+    "prettier": "^3.1.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
