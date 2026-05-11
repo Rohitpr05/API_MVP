@@ -35,7 +35,8 @@ export const extractPageContent = async (
   try {
     const safeUrl = await assertSafeHttpUrl(url);
 
-    logger.info({ url: safeUrl.href }, 'Starting browser extraction');
+    logger.info({ 
+        url: safeUrl.href }, 'Starting browser extraction');
 
     // Launch headless browser
     browser = await chromium.launch({
