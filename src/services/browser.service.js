@@ -9,14 +9,6 @@ import { assertSafeHttpUrl } from '../utils/urlSafety.js';
 
 const NETWORK_IDLE_TIMEOUT = 5000;
 
-const resolveChromiumExecutablePath = () => {
-  if (!config.chromiumPath) {
-    return undefined;
-  }
-
-  return config.chromiumPath;
-};
-
 /**
  * Extract webpage content using Playwright
  *
@@ -41,7 +33,6 @@ export const extractPageContent = async (
     // Launch headless browser
     browser = await chromium.launch({
       headless: true,
-      executablePath: resolveChromiumExecutablePath(),
       timeout: config.browserLaunchTimeout,
       args: [
         '--no-sandbox',
@@ -175,7 +166,6 @@ export const extractBySelectors = async (url, selectors = {}) => {
 
     browser = await chromium.launch({
       headless: true,
-      executablePath: resolveChromiumExecutablePath(),
       timeout: config.browserLaunchTimeout,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
     });

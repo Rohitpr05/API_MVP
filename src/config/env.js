@@ -39,7 +39,6 @@ export const config = {
   openrouterTimeout: parseInt(process.env.OPENROUTER_TIMEOUT || '10000', 10),
 
   // Browser / extraction safety
-  chromiumPath: process.env.CHROMIUM_PATH || process.env.PLAYWRIGHT_CHROMIUM_PATH || process.env.CHROME_PATH || '',
   browserLaunchTimeout: parseInt(process.env.BROWSER_LAUNCH_TIMEOUT || '10000', 10),
   pageGotoTimeout: parseInt(process.env.PAGE_GOTO_TIMEOUT || '10000', 10),
 
