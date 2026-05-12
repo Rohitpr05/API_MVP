@@ -253,75 +253,279 @@ export const parseJsonResponse = (response) => {
   }
 };
 
-/**
- * Validate extracted data against schema and enforce strict conformance
- * - Only keeps schema-defined keys
- * - Sets missing values to null
- * - Coerces types to match schema
- * - Always returns a properly shaped object matching requested schema
- */
-export const validateAgainstSchema = (data, schema) => {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    // If we don't have valid extracted data, return null-filled schema shape
-    const nullFilled = {};
-    Object.keys(schema).forEach((key) => {
-      const type = schema[key];
-      if (type === 'array') {
-        nullFilled[key] = [];
-      } else if (type === 'object') {
-        nullFilled[key] = {};
-      } else {
-        nullFilled[key] = null;
-      }
-    });
-    return nullFilled;
+const SEMANTIC_KEY_GROUPS = [
+  ['companyname', 'company', 'businessname', 'business', 'brandname', 'brand', 'organization', 'organisation'],
+  ['mainheadline', 'headline', 'title', 'heroheadline', 'tagline', 'subtitle', 'summary'],
+  ['services', 'service', 'features', 'feature', 'offerings', 'offering', 'solutions', 'solution', 'capabilities', 'capability', 'products', 'product'],
+  ['pricing', 'price', 'prices', 'plan', 'plans', 'cost', 'costs', 'rate', 'rates'],
+  ['timeline', 'timelines', 'schedule', 'roadmap', 'milestone', 'milestones', 'phase', 'phases'],
+  ['description', 'desc', 'overview', 'about', 'intro', 'introduction'],
+];
+
+const normalizeKey = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+const tokenizeKey = (value) =>
+  String(value || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_\-.]+/g, ' ')
+    .toLowerCase()
+    .match(/[a-z0-9]+/g) || [];
+
+const getSemanticGroup = (value) => {
+  const normalized = normalizeKey(value);
+  const tokens = tokenizeKey(value).map(normalizeKey);
+
+  for (const group of SEMANTIC_KEY_GROUPS) {
+    if (group.includes(normalized)) {
+      return group[0];
+    }
+
+    if (tokens.some((token) => group.includes(token))) {
+      return group[0];
+    }
   }
 
-  // Enforce strict schema conformance - ONLY schema keys allowed
-  const validated = {};
+  return null;
+};
 
-  Object.entries(schema).forEach(([key, type]) => {
-    const value = data[key];
+const buildSchemaSkeleton = (schema) => {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    return null;
+  }
 
-    switch (type) {
-      case 'string':
-        validated[key] = typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-        break;
-      case 'number':
-        if (typeof value === 'number') {
-          validated[key] = value;
-        } else if (typeof value === 'string') {
-          const parsed = parseFloat(value);
-          validated[key] = !Number.isNaN(parsed) ? parsed : null;
-        } else {
-          validated[key] = null;
-        }
-        break;
-      case 'boolean':
-        if (typeof value === 'boolean') {
-          validated[key] = value;
-        } else if (typeof value === 'string') {
-          validated[key] = value.toLowerCase() === 'true' || value === '1';
-        } else {
-          validated[key] = null;
-        }
-        break;
+  const skeleton = {};
+
+  Object.entries(schema).forEach(([key, schemaNode]) => {
+    if (schemaNode && typeof schemaNode === 'object' && !Array.isArray(schemaNode)) {
+      skeleton[key] = buildSchemaSkeleton(schemaNode);
+      return;
+    }
+
+    switch (schemaNode) {
       case 'array':
-        validated[key] = Array.isArray(value) ? value : [];
+        skeleton[key] = [];
         break;
       case 'object':
-        if (value && typeof value === 'object' && !Array.isArray(value)) {
-          validated[key] = value;
-        } else {
-          validated[key] = {};
-        }
+        skeleton[key] = null;
         break;
       default:
-        validated[key] = value ?? null;
+        skeleton[key] = null;
     }
   });
 
-  return validated;
+  return skeleton;
+};
+
+const extractCandidateEntries = (value, path = []) => {
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return [
+      {
+        key: path.at(-1) || '',
+        path: path.join('.'),
+        value,
+      },
+    ];
+  }
+
+  return Object.entries(value).flatMap(([key, entryValue]) => {
+    const entryPath = [...path, key];
+    const currentEntry = {
+      key,
+      path: entryPath.join('.'),
+      value: entryValue,
+    };
+
+    if (entryValue && typeof entryValue === 'object') {
+      return [currentEntry, ...extractCandidateEntries(entryValue, entryPath)];
+    }
+
+    return [currentEntry];
+  });
+};
+
+const scoreCandidateMatch = (schemaKey, expectedType, candidate) => {
+  const candidateValueType = Array.isArray(candidate.value) ? 'array' : typeof candidate.value;
+
+  if (expectedType === 'array' && candidateValueType !== 'array') {
+    return 0;
+  }
+
+  if (expectedType === 'object' && (candidateValueType !== 'object' || candidate.value === null || Array.isArray(candidate.value))) {
+    return 0;
+  }
+
+  if (expectedType === 'string' && candidateValueType === 'object') {
+    return 0;
+  }
+
+  if (expectedType === 'number' && candidateValueType === 'object') {
+    return 0;
+  }
+
+  if (expectedType === 'boolean' && candidateValueType === 'object') {
+    return 0;
+  }
+
+  const schemaNormalized = normalizeKey(schemaKey);
+  const candidateNormalized = normalizeKey(candidate.key);
+  const candidatePathNormalized = normalizeKey(candidate.path);
+
+  if (candidateNormalized === schemaNormalized || candidatePathNormalized === schemaNormalized) {
+    return 100;
+  }
+
+  const schemaGroup = getSemanticGroup(schemaKey);
+  const candidateGroup = getSemanticGroup(candidate.key);
+
+  if (schemaGroup && candidateGroup && schemaGroup === candidateGroup) {
+    return 90;
+  }
+
+  const schemaTokens = new Set(tokenizeKey(schemaKey).map(normalizeKey));
+  const candidateTokens = tokenizeKey(candidate.key).map(normalizeKey);
+  const overlapCount = candidateTokens.filter((token) => schemaTokens.has(token)).length;
+
+  if (overlapCount > 0) {
+    const overlapScore = overlapCount / Math.max(schemaTokens.size, candidateTokens.length, 1);
+    return 70 + overlapScore * 20;
+  }
+
+  if (candidateNormalized.includes(schemaNormalized) || schemaNormalized.includes(candidateNormalized)) {
+    return 75;
+  }
+
+  return 0;
+};
+
+const coerceValueToType = (value, expectedType) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  switch (expectedType) {
+    case 'string':
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : null;
+      }
+
+      if (typeof value === 'number' || typeof value === 'boolean') {
+        return String(value);
+      }
+
+      return null;
+    case 'number':
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+      }
+
+      if (typeof value === 'string') {
+        const parsed = Number.parseFloat(value);
+        return Number.isNaN(parsed) ? null : parsed;
+      }
+
+      return null;
+    case 'boolean':
+      if (typeof value === 'boolean') {
+        return value;
+      }
+
+      if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['true', '1', 'yes', 'y'].includes(normalized)) {
+          return true;
+        }
+
+        if (['false', '0', 'no', 'n'].includes(normalized)) {
+          return false;
+        }
+      }
+
+      if (typeof value === 'number') {
+        return value !== 0;
+      }
+
+      return null;
+    case 'array':
+      return Array.isArray(value) ? value : [];
+    case 'object':
+      return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+    default:
+      return value ?? null;
+  }
+};
+
+const pickBestCandidate = (schemaKey, expectedType, candidates, usedPaths) => {
+  let bestCandidate = null;
+  let bestScore = 0;
+
+  candidates.forEach((candidate) => {
+    if (usedPaths.has(candidate.path)) {
+      return;
+    }
+
+    const score = scoreCandidateMatch(schemaKey, expectedType, candidate);
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestCandidate = candidate;
+    }
+  });
+
+  if (bestScore < 70) {
+    return null;
+  }
+
+  return bestCandidate;
+};
+
+const normalizeSchemaNode = (schemaNode, candidates, usedPaths, schemaKey = '') => {
+  if (typeof schemaNode === 'string') {
+    const candidate = pickBestCandidate(schemaKey, schemaNode, candidates, usedPaths);
+
+    if (!candidate) {
+      return schemaNode === 'array' ? [] : null;
+    }
+
+    usedPaths.add(candidate.path);
+    return coerceValueToType(candidate.value, schemaNode);
+  }
+
+  if (schemaNode && typeof schemaNode === 'object' && !Array.isArray(schemaNode)) {
+    const normalizedObject = {};
+
+    Object.entries(schemaNode).forEach(([childKey, childSchema]) => {
+      normalizedObject[childKey] = normalizeSchemaNode(childSchema, candidates, usedPaths, childKey);
+    });
+
+    return normalizedObject;
+  }
+
+  return null;
+};
+
+/**
+ * Normalize extracted data against the requested schema shape.
+ * Preserves only schema-approved keys, performs exact/case-insensitive/semantic matching,
+ * and fills missing fields with null or [] depending on the requested type.
+ */
+export const validateAgainstSchema = (data, schema) => {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    return null;
+  }
+
+  const candidates = extractCandidateEntries(data);
+  const usedPaths = new Set();
+
+  if (candidates.length === 0) {
+    return buildSchemaSkeleton(schema);
+  }
+
+  return normalizeSchemaNode(schema, candidates, usedPaths);
 };
 
 /**
