@@ -5,6 +5,10 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const timeoutMs = Number(process.env.EXTRACTION_TIMEOUT || 45000);
+
+console.log('Extraction timeout:', timeoutMs);
+
 const requiredEnvVars = [
   'NODE_ENV',
   'PORT',
@@ -43,7 +47,7 @@ export const config = {
   pageGotoTimeout: parseInt(process.env.PAGE_GOTO_TIMEOUT || '10000', 10),
 
   // Extraction settings
-  extractionTimeout: parseInt(process.env.EXTRACTION_TIMEOUT || '15000', 10),
+  extractionTimeout: timeoutMs,
   extractionMaxContentLength: parseInt(process.env.EXTRACTION_MAX_CONTENT || '12000', 10),
   defaultExtractionModel: process.env.EXTRACTION_MODEL || 'deepseek/deepseek-chat',
 

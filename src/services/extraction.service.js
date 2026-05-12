@@ -87,6 +87,7 @@ export const extractFromUrl = async (extractionData) => {
         ],
         temperature: 0,
         max_tokens: 2000,
+        timeout: extractionTimeout,
       });
 
       const elapsed = Date.now() - startTime;

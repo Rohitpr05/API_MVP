@@ -36,7 +36,7 @@ const extractionBodySchema = {
       type: 'object',
       properties: {
         model: { type: 'string', example: 'deepseek/deepseek-chat' },
-        timeout: { type: 'number', minimum: 1000, maximum: 30000, example: 15000 },
+        timeout: { type: 'number', minimum: 1000, maximum: 45000, example: 45000 },
       },
       additionalProperties: false,
     },
