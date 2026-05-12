@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: json-extraction-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: LOG_LEVEL
+        value: info
+      - key: BROWSER_LAUNCH_TIMEOUT
+        value: 15000
+      - key: PAGE_GOTO_TIMEOUT
+        value: 15000
+    secretFiles:
+      - name: .env
