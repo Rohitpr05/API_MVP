@@ -3,6 +3,180 @@
 
 import { UnprocessableEntityError } from './errors.js';
 
+const CODE_FENCE_PATTERN = /```(?:json)?\s*([\s\S]*?)```/i;
+
+const extractBalancedJsonSubstring = (text, startIndex) => {
+  const openChar = text[startIndex];
+  const closeChar = openChar === '{' ? '}' : openChar === '[' ? ']' : null;
+
+  if (!closeChar) {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = startIndex; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (char === openChar) {
+      depth += 1;
+      continue;
+    }
+
+    if (char === closeChar) {
+      depth -= 1;
+
+      if (depth === 0) {
+        return text.slice(startIndex, index + 1);
+      }
+    }
+  }
+
+  return null;
+};
+
+const removeTrailingCommas = (text) => text.replace(/,\s*([}\]])/g, '$1');
+
+const stripMarkdownCodeFences = (text) => {
+  const fencedBlock = text.match(CODE_FENCE_PATTERN);
+
+  if (fencedBlock?.[1]) {
+    return fencedBlock[1].trim();
+  }
+
+  return text.trim();
+};
+
+const extractJsonCandidates = (text) => {
+  const candidates = [];
+  const seen = new Set();
+
+  const addCandidate = (candidate) => {
+    const trimmedCandidate = candidate.trim();
+
+    if (trimmedCandidate && !seen.has(trimmedCandidate)) {
+      seen.add(trimmedCandidate);
+      candidates.push(trimmedCandidate);
+    }
+  };
+
+  addCandidate(text);
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (char !== '{' && char !== '[') {
+      continue;
+    }
+
+    const candidate = extractBalancedJsonSubstring(text, index);
+
+    if (candidate) {
+      addCandidate(candidate);
+    }
+  }
+
+  return candidates;
+};
+
+const parseJsonCandidate = (candidate) => {
+  const trimmedCandidate = candidate.trim();
+
+  if (!trimmedCandidate) {
+    throw new UnprocessableEntityError('No JSON content found in extraction response');
+  }
+
+  const sanitizedCandidate = removeTrailingCommas(trimmedCandidate);
+
+  const directParsed = JSON.parse(sanitizedCandidate);
+
+  if (typeof directParsed === 'string') {
+    const nestedText = directParsed.trim();
+
+    if (nestedText.startsWith('{') || nestedText.startsWith('[')) {
+      return parseJsonCandidate(nestedText);
+    }
+
+    throw new UnprocessableEntityError('Extraction response contained a JSON string instead of an object');
+  }
+
+  if (!directParsed || typeof directParsed !== 'object' || Array.isArray(directParsed)) {
+    throw new UnprocessableEntityError('Extraction response did not contain a JSON object');
+  }
+
+  return directParsed;
+};
+
+/**
+ * Normalize a model response into plain text.
+ */
+export const extractModelResponseText = (response) => {
+  if (response == null) {
+    return '';
+  }
+
+  if (typeof response === 'string') {
+    return response;
+  }
+
+  if (Array.isArray(response)) {
+    return response
+      .map((item) => extractModelResponseText(item))
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  if (typeof response === 'object') {
+    const contentCandidates = [
+      response.content,
+      response.text,
+      response.message?.content,
+      response.choices?.[0]?.message?.content,
+      response.output_text,
+      response.data,
+    ];
+
+    for (const candidate of contentCandidates) {
+      const extracted = extractModelResponseText(candidate);
+      if (extracted) {
+        return extracted;
+      }
+    }
+  }
+
+  return String(response);
+};
+
+/**
+ * Prepare raw model text for JSON parsing.
+ */
+export const prepareJsonResponseText = (response) => {
+  const rawText = extractModelResponseText(response);
+  const withoutFences = stripMarkdownCodeFences(rawText);
+  return withoutFences.trim();
+};
+
 /**
  * Clean and normalize content
  */
@@ -32,9 +206,15 @@ export const prepareExtractionPrompt = (content, schema) => {
     .map(([key, type]) => `  - ${key}: ${type}`)
     .join('\n');
 
-  const prompt = `You are a JSON extraction engine. Extract ONLY the requested fields from the webpage content below.
+  const prompt = `You are a strict JSON extraction engine.
 
-Return ONLY valid JSON with the exact schema specified. Do not include any explanation or additional text.
+Return ONLY one valid raw JSON object matching the schema.
+Do not return markdown.
+Do not wrap the answer in code fences.
+Do not include explanations, commentary, or prose.
+Do not include trailing commas.
+Do not return a JSON string.
+Begin with { and end with }.
 
 SCHEMA:
 ${schemaDescription}
@@ -42,7 +222,7 @@ ${schemaDescription}
 CONTENT:
 ${content}
 
-Return ONLY valid JSON matching the schema:`;
+Return ONLY valid JSON matching the schema.`;
 
   return prompt;
 };
@@ -52,17 +232,24 @@ Return ONLY valid JSON matching the schema:`;
  */
 export const parseJsonResponse = (response) => {
   try {
-    // Try to extract JSON from response
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
+    const responseText = prepareJsonResponseText(response);
+    const candidates = extractJsonCandidates(responseText);
+
+    if (candidates.length === 0) {
       throw new UnprocessableEntityError('No JSON found in extraction response');
     }
 
-    const json = JSON.parse(jsonMatch[0]);
-    if (!json || typeof json !== 'object' || Array.isArray(json)) {
-      throw new UnprocessableEntityError('Extraction response did not contain a JSON object');
+    let lastError;
+
+    for (const candidate of candidates) {
+      try {
+        return parseJsonCandidate(candidate);
+      } catch (error) {
+        lastError = error;
+      }
     }
-    return json;
+
+    throw lastError || new UnprocessableEntityError('Extraction response did not contain a valid JSON object');
   } catch (error) {
     if (error instanceof UnprocessableEntityError) {
       throw error;
@@ -127,6 +314,8 @@ export const formatUsageInfo = (usage, model) => {
 export default {
   cleanContent,
   prepareExtractionPrompt,
+  extractModelResponseText,
+  prepareJsonResponseText,
   parseJsonResponse,
   validateAgainstSchema,
   formatUsageInfo,

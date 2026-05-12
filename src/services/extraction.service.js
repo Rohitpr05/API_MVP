@@ -8,6 +8,8 @@ import { extractPageContent } from './browser.service.js';
 import {
   cleanContent,
   prepareExtractionPrompt,
+  extractModelResponseText,
+  prepareJsonResponseText,
   parseJsonResponse,
   validateAgainstSchema,
   formatUsageInfo,
@@ -29,6 +31,18 @@ const withTimeout = async (promise, timeoutMs, message) => {
   } finally {
     clearTimeout(timeoutId);
   }
+};
+
+const truncateForLog = (value, maxLength = 8000) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength)}\n... [truncated]`;
 };
 
 // Initialize OpenRouter client
@@ -98,8 +112,48 @@ export const extractFromUrl = async (extractionData) => {
       );
 
       // Step 4: Parse and validate response
-      const responseText = response.choices[0]?.message?.content || '';
-      let extractedData = parseJsonResponse(responseText);
+      const rawResponseText = extractModelResponseText(response);
+      const cleanedResponseText = prepareJsonResponseText(response);
+
+      logger.info(
+        {
+          extractionId,
+          rawResponseText: truncateForLog(rawResponseText),
+        },
+        'Raw LLM response text'
+      );
+
+      logger.info(
+        {
+          extractionId,
+          cleanedResponseText: truncateForLog(cleanedResponseText),
+        },
+        'Cleaned LLM response text'
+      );
+
+      let extractedData;
+
+      try {
+        extractedData = parseJsonResponse(cleanedResponseText);
+      } catch (parseError) {
+        logger.info(
+          {
+            extractionId,
+            rawResponseText: truncateForLog(rawResponseText),
+            cleanedResponseText: truncateForLog(cleanedResponseText),
+            parseError: parseError.message,
+          },
+          'JSON parse failure'
+        );
+
+        throw parseError;
+      }
+
+      logger.info(
+        { extractionId, parsedJson: extractedData },
+        'Parsed JSON object'
+      );
+
       extractedData = validateAgainstSchema(extractedData, schema);
 
       // Step 5: Format usage info
