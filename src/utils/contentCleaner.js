@@ -201,14 +201,19 @@ export const cleanContent = (content, maxLength = 12000) => {
  * Prepare content and schema for LLM extraction prompt
  */
 export const prepareExtractionPrompt = (content, schema) => {
-  // Build schema description
-  const schemaDescription = Object.entries(schema)
-    .map(([key, type]) => `  - ${key}: ${type}`)
-    .join('\n');
+  const schemaJson = JSON.stringify(schema, null, 2);
 
   const prompt = `You are a strict JSON extraction engine.
 
-Return ONLY one valid raw JSON object matching the schema.
+Return ONLY one valid raw JSON object.
+Use EXACTLY the schema keys provided below.
+Do NOT invent new keys.
+Do NOT rename keys.
+Do NOT omit keys.
+If a scalar value is missing, use null.
+If an array field has no items, return an empty array [].
+Arrays must remain arrays.
+Preserve exact field names.
 Do not return markdown.
 Do not wrap the answer in code fences.
 Do not include explanations, commentary, or prose.
@@ -216,8 +221,21 @@ Do not include trailing commas.
 Do not return a JSON string.
 Begin with { and end with }.
 
-SCHEMA:
-${schemaDescription}
+Requested schema:
+${schemaJson}
+
+Example:
+Requested schema:
+{
+  "companyName": "string",
+  "services": "array"
+}
+
+Correct output:
+{
+  "companyName": "NOVARES",
+  "services": ["GST", "MCA"]
+}
 
 CONTENT:
 ${content}

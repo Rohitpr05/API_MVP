@@ -87,6 +87,14 @@ export const extractFromUrl = async (extractionData) => {
       // Step 2: Prepare extraction prompt
       const prompt = prepareExtractionPrompt(cleanedContent, schema);
 
+      logger.info(
+        {
+          extractionId,
+          prompt,
+        },
+        'Final prompt sent to OpenRouter'
+      );
+
       // Step 3: Call OpenRouter API
       logger.debug({ extractionId, model }, 'Calling OpenRouter API');
       const startTime = Date.now();
