@@ -10,7 +10,6 @@ RUN npm install --omit=dev
 
 # Copy application source code
 COPY src ./src/
-COPY prisma ./prisma/
 
 # Copy environment template (actual values come from Render environment variables)
 COPY .env.example ./
