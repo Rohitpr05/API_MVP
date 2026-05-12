@@ -254,13 +254,30 @@ export const parseJsonResponse = (response) => {
 };
 
 /**
- * Validate extracted data against schema
+ * Validate extracted data against schema and enforce strict conformance
+ * - Only keeps schema-defined keys
+ * - Sets missing values to null
+ * - Coerces types to match schema
+ * - Always returns a properly shaped object matching requested schema
  */
 export const validateAgainstSchema = (data, schema) => {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    throw new UnprocessableEntityError('Extraction output must be a JSON object');
+    // If we don't have valid extracted data, return null-filled schema shape
+    const nullFilled = {};
+    Object.keys(schema).forEach((key) => {
+      const type = schema[key];
+      if (type === 'array') {
+        nullFilled[key] = [];
+      } else if (type === 'object') {
+        nullFilled[key] = {};
+      } else {
+        nullFilled[key] = null;
+      }
+    });
+    return nullFilled;
   }
 
+  // Enforce strict schema conformance - ONLY schema keys allowed
   const validated = {};
 
   Object.entries(schema).forEach(([key, type]) => {
@@ -268,25 +285,39 @@ export const validateAgainstSchema = (data, schema) => {
 
     switch (type) {
       case 'string':
-        validated[key] = typeof value === 'string' ? value : String(value || '');
+        validated[key] = typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
         break;
       case 'number':
-        validated[key] = typeof value === 'number' ? value : parseFloat(value) || 0;
+        if (typeof value === 'number') {
+          validated[key] = value;
+        } else if (typeof value === 'string') {
+          const parsed = parseFloat(value);
+          validated[key] = !Number.isNaN(parsed) ? parsed : null;
+        } else {
+          validated[key] = null;
+        }
         break;
       case 'boolean':
-        validated[key] =
-          typeof value === 'boolean'
-            ? value
-            : value === 'true' || value === true || value === 1;
+        if (typeof value === 'boolean') {
+          validated[key] = value;
+        } else if (typeof value === 'string') {
+          validated[key] = value.toLowerCase() === 'true' || value === '1';
+        } else {
+          validated[key] = null;
+        }
         break;
       case 'array':
         validated[key] = Array.isArray(value) ? value : [];
         break;
       case 'object':
-        validated[key] = typeof value === 'object' ? value : {};
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          validated[key] = value;
+        } else {
+          validated[key] = {};
+        }
         break;
       default:
-        validated[key] = value;
+        validated[key] = value ?? null;
     }
   });
 

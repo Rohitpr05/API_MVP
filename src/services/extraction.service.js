@@ -163,7 +163,8 @@ export const extractFromUrl = async (extractionData) => {
       );
 
       const validatedData = validateAgainstSchema(extractedData, schema);
-      const finalData = Object.keys(validatedData || {}).length > 0 ? validatedData : extractedData;
+      // Always use validated data - strict schema conformance required
+      const finalData = validatedData;
 
       logger.info(
         {
