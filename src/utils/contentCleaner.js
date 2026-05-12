@@ -203,48 +203,20 @@ export const cleanContent = (content, maxLength = 12000) => {
 export const prepareExtractionPrompt = (content, schema) => {
   const schemaJson = JSON.stringify(schema, null, 2);
 
-  const prompt = `You are a strict JSON extraction engine.
+  const prompt = `Extract structured data from the webpage content.
 
-Return ONLY one valid raw JSON object.
-Use EXACTLY the schema keys provided below.
-Do NOT invent new keys.
-Do NOT rename keys.
-Do NOT omit keys.
-Arrays must remain arrays.
-Preserve exact field names.
-Extract the most likely matching value from the page content for each schema field.
-If the information is clearly visible or inferable from the content, populate the field.
-Use null only when the information truly does not exist anywhere in the content.
-Do not return markdown.
-Do not wrap the answer in code fences.
-Do not include explanations, commentary, or prose.
-Do not include trailing commas.
-Do not return a JSON string.
-Begin with { and end with }.
+Rules:
+* Return ONLY valid JSON
+* Use EXACTLY the schema keys provided
+* Do NOT add extra keys
+* If a value cannot be found, use null
+* Arrays must remain arrays
 
-Requested schema:
+Schema:
 ${schemaJson}
 
-Example:
-Requested schema:
-{
-  "companyName": "string",
-  "services": "array"
-}
-
-Content contains:
-"NOVARES provides GST filing and MCA compliance tools"
-
-Correct output:
-{
-  "companyName": "NOVARES",
-  "services": ["GST filing", "MCA compliance"]
-}
-
-CONTENT:
-${content}
-
-Return ONLY valid JSON matching the schema.`;
+Webpage Content:
+${content}`;
 
   return prompt;
 };
