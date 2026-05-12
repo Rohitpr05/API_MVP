@@ -69,7 +69,7 @@ export const extractFromUrl = async (extractionData) => {
 
   try {
     const { url, schema, options = {} } = extractionData;
-    const model = options.model || 'deepseek/deepseek-chat'; // Free/cheap model
+    const model = options.model || 'openai/gpt-4o-mini';
     const extractionTimeout = options.timeout || config.extractionTimeout;
     const browserTimeout = Math.min(config.pageGotoTimeout, extractionTimeout);
 

@@ -49,7 +49,7 @@ export const config = {
   // Extraction settings
   extractionTimeout: timeoutMs,
   extractionMaxContentLength: parseInt(process.env.EXTRACTION_MAX_CONTENT || '12000', 10),
-  defaultExtractionModel: process.env.EXTRACTION_MODEL || 'deepseek/deepseek-chat',
+  defaultExtractionModel: process.env.EXTRACTION_MODEL || 'openai/gpt-4o-mini',
 
   // Feature flags
   isDevelopment: process.env.NODE_ENV === 'development',
