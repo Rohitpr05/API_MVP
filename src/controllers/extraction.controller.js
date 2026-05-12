@@ -44,14 +44,19 @@ export const extract = async (request, reply) => {
     // Extract data (no user tracking needed - RapidAPI handles it)
     const result = await extractFromUrl(validated);
 
+    const responsePayload = successResponse(result, 'Extraction successful');
+
     logger.info(
       { url: validated.url, durationMs: Date.now() - startedAt, tokensUsed: result?.usage?.tokensUsed || 0 },
       'Extraction request completed'
     );
 
-    return reply.status(200).send(
-      successResponse(result, 'Extraction successful')
+    logger.info(
+      { url: validated.url, responsePayload },
+      'Final response payload before send'
     );
+
+    return reply.status(200).send(responsePayload);
   } catch (error) {
     logger.error({ error }, 'Extraction error');
 

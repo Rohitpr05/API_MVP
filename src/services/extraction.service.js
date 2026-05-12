@@ -154,15 +154,25 @@ export const extractFromUrl = async (extractionData) => {
         'Parsed JSON object'
       );
 
-      extractedData = validateAgainstSchema(extractedData, schema);
+      const validatedData = validateAgainstSchema(extractedData, schema);
+      const finalData = Object.keys(validatedData || {}).length > 0 ? validatedData : extractedData;
+
+      logger.info(
+        {
+          extractionId,
+          finalData,
+          validatedData,
+        },
+        'Final extraction data payload'
+      );
 
       // Step 5: Format usage info
       const usage = formatUsageInfo(response.usage, model);
 
-      return {
+      const extractionResult = {
         extractionId,
         success: true,
-        data: extractedData,
+        data: finalData,
         source: {
           url: pageData.url,
           title: pageData.title,
@@ -170,6 +180,13 @@ export const extractFromUrl = async (extractionData) => {
         usage,
         timestamp: new Date().toISOString(),
       };
+
+      logger.info(
+        { extractionId, extractionResult },
+        'Final extraction service return value'
+      );
+
+      return extractionResult;
     })(), extractionTimeout, `Extraction timed out after ${extractionTimeout}ms`);
 
     logger.info(
