@@ -2,6 +2,7 @@
 // Utility functions for cleaning and preparing content for LLM extraction
 
 import { UnprocessableEntityError } from './errors.js';
+import { logger } from './logger.js';
 
 const CODE_FENCE_PATTERN = /```(?:json)?\s*([\s\S]*?)```/i;
 
@@ -288,6 +289,30 @@ const getSemanticGroup = (value) => {
   return null;
 };
 
+const inferNodeKind = (schemaNode) => {
+  if (Array.isArray(schemaNode)) {
+    return 'array';
+  }
+
+  if (schemaNode === null || schemaNode === undefined) {
+    return 'unknown';
+  }
+
+  if (typeof schemaNode === 'string') {
+    if (['string', 'number', 'boolean', 'array', 'object'].includes(schemaNode)) {
+      return schemaNode;
+    }
+
+    return 'unknown';
+  }
+
+  if (typeof schemaNode === 'object') {
+    return 'object';
+  }
+
+  return 'unknown';
+};
+
 const buildSchemaSkeleton = (schema) => {
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
     return null;
@@ -296,21 +321,19 @@ const buildSchemaSkeleton = (schema) => {
   const skeleton = {};
 
   Object.entries(schema).forEach(([key, schemaNode]) => {
-    if (schemaNode && typeof schemaNode === 'object' && !Array.isArray(schemaNode)) {
+    const nodeKind = inferNodeKind(schemaNode);
+
+    if (nodeKind === 'object' && schemaNode && !Array.isArray(schemaNode) && Object.keys(schemaNode).length > 0) {
       skeleton[key] = buildSchemaSkeleton(schemaNode);
       return;
     }
 
-    switch (schemaNode) {
-      case 'array':
-        skeleton[key] = [];
-        break;
-      case 'object':
-        skeleton[key] = null;
-        break;
-      default:
-        skeleton[key] = null;
+    if (nodeKind === 'array') {
+      skeleton[key] = [];
+      return;
     }
+
+    skeleton[key] = null;
   });
 
   return skeleton;
@@ -339,7 +362,7 @@ const extractCandidateEntries = (value, path = []) => {
       value: entryValue,
     };
 
-    if (entryValue && typeof entryValue === 'object') {
+    if (entryValue && typeof entryValue === 'object' && !Array.isArray(entryValue)) {
       return [currentEntry, ...extractCandidateEntries(entryValue, entryPath)];
     }
 
@@ -347,95 +370,30 @@ const extractCandidateEntries = (value, path = []) => {
   });
 };
 
-const scoreCandidateMatch = (schemaKey, expectedType, candidate) => {
-  const candidateValueType = Array.isArray(candidate.value) ? 'array' : typeof candidate.value;
+const describeCandidate = (candidate) => ({
+  key: candidate.key,
+  path: candidate.path,
+  valueType: Array.isArray(candidate.value) ? 'array' : typeof candidate.value,
+});
 
-  if (expectedType === 'array' && candidateValueType !== 'array') {
-    return 0;
+const coerceCandidateValue = (candidateValue, nodeKind) => {
+  if (candidateValue === null || candidateValue === undefined) {
+    return nodeKind === 'array' ? [] : null;
   }
 
-  if (expectedType === 'object' && (candidateValueType !== 'object' || candidate.value === null || Array.isArray(candidate.value))) {
-    return 0;
-  }
-
-  if (expectedType === 'string' && candidateValueType === 'object') {
-    return 0;
-  }
-
-  if (expectedType === 'number' && candidateValueType === 'object') {
-    return 0;
-  }
-
-  if (expectedType === 'boolean' && candidateValueType === 'object') {
-    return 0;
-  }
-
-  const schemaNormalized = normalizeKey(schemaKey);
-  const candidateNormalized = normalizeKey(candidate.key);
-  const candidatePathNormalized = normalizeKey(candidate.path);
-
-  if (candidateNormalized === schemaNormalized || candidatePathNormalized === schemaNormalized) {
-    return 100;
-  }
-
-  const schemaGroup = getSemanticGroup(schemaKey);
-  const candidateGroup = getSemanticGroup(candidate.key);
-
-  if (schemaGroup && candidateGroup && schemaGroup === candidateGroup) {
-    return 90;
-  }
-
-  const schemaTokens = new Set(tokenizeKey(schemaKey).map(normalizeKey));
-  const candidateTokens = tokenizeKey(candidate.key).map(normalizeKey);
-  const overlapCount = candidateTokens.filter((token) => schemaTokens.has(token)).length;
-
-  if (overlapCount > 0) {
-    const overlapScore = overlapCount / Math.max(schemaTokens.size, candidateTokens.length, 1);
-    return 70 + overlapScore * 20;
-  }
-
-  if (candidateNormalized.includes(schemaNormalized) || schemaNormalized.includes(candidateNormalized)) {
-    return 75;
-  }
-
-  return 0;
-};
-
-const coerceValueToType = (value, expectedType) => {
-  if (value === null || value === undefined) {
-    return null;
-  }
-
-  switch (expectedType) {
-    case 'string':
-      if (typeof value === 'string') {
-        const trimmed = value.trim();
-        return trimmed.length > 0 ? trimmed : null;
-      }
-
-      if (typeof value === 'number' || typeof value === 'boolean') {
-        return String(value);
-      }
-
-      return null;
-    case 'number':
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        return value;
-      }
-
-      if (typeof value === 'string') {
-        const parsed = Number.parseFloat(value);
-        return Number.isNaN(parsed) ? null : parsed;
-      }
-
-      return null;
+  switch (nodeKind) {
+    case 'array':
+      return Array.isArray(candidateValue) ? candidateValue : [];
+    case 'object':
+      return candidateValue && typeof candidateValue === 'object' && !Array.isArray(candidateValue) ? candidateValue : null;
     case 'boolean':
-      if (typeof value === 'boolean') {
-        return value;
+      if (typeof candidateValue === 'boolean') {
+        return candidateValue;
       }
 
-      if (typeof value === 'string') {
-        const normalized = value.trim().toLowerCase();
+      if (typeof candidateValue === 'string') {
+        const normalized = candidateValue.trim().toLowerCase();
+
         if (['true', '1', 'yes', 'y'].includes(normalized)) {
           return true;
         }
@@ -445,67 +403,216 @@ const coerceValueToType = (value, expectedType) => {
         }
       }
 
-      if (typeof value === 'number') {
-        return value !== 0;
+      if (typeof candidateValue === 'number') {
+        return candidateValue !== 0;
       }
 
       return null;
-    case 'array':
-      return Array.isArray(value) ? value : [];
-    case 'object':
-      return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+    case 'number':
+      if (typeof candidateValue === 'number' && Number.isFinite(candidateValue)) {
+        return candidateValue;
+      }
+
+      if (typeof candidateValue === 'string') {
+        const parsed = Number.parseFloat(candidateValue);
+        return Number.isNaN(parsed) ? null : parsed;
+      }
+
+      return null;
+    case 'string':
+    case 'unknown':
     default:
-      return value ?? null;
+      if (typeof candidateValue === 'string') {
+        const trimmed = candidateValue.trim();
+        return trimmed.length > 0 ? trimmed : null;
+      }
+
+      if (typeof candidateValue === 'number' || typeof candidateValue === 'boolean') {
+        return String(candidateValue);
+      }
+
+      return candidateValue && typeof candidateValue === 'object' ? null : candidateValue ?? null;
   }
 };
 
-const pickBestCandidate = (schemaKey, expectedType, candidates, usedPaths) => {
+const scoreCandidateMatch = (schemaKey, nodeKind, candidate) => {
+  const candidateValueType = Array.isArray(candidate.value) ? 'array' : typeof candidate.value;
+
+  if (nodeKind === 'array' && candidateValueType !== 'array') {
+    return { score: 0, reason: 'expected array but candidate value is not an array' };
+  }
+
+  if (nodeKind === 'object' && (candidateValueType !== 'object' || candidate.value === null || Array.isArray(candidate.value))) {
+    return { score: 0, reason: 'expected object but candidate value is not an object' };
+  }
+
+  if ((nodeKind === 'string' || nodeKind === 'number' || nodeKind === 'boolean') && candidateValueType === 'object') {
+    return { score: 0, reason: `expected ${nodeKind} but candidate value is an object` };
+  }
+
+  const schemaNormalized = normalizeKey(schemaKey);
+  const candidateNormalized = normalizeKey(candidate.key);
+  const candidatePathNormalized = normalizeKey(candidate.path);
+
+  if (candidateNormalized === schemaNormalized || candidatePathNormalized === schemaNormalized) {
+    return { score: 100, reason: 'exact match' };
+  }
+
+  const schemaGroup = getSemanticGroup(schemaKey);
+  const candidateGroup = getSemanticGroup(candidate.key);
+
+  if (schemaGroup && candidateGroup && schemaGroup === candidateGroup) {
+    return { score: 90, reason: `semantic group match (${schemaGroup})` };
+  }
+
+  const schemaTokens = new Set(tokenizeKey(schemaKey).map(normalizeKey));
+  const candidateTokens = tokenizeKey(candidate.key).map(normalizeKey);
+  const overlapCount = candidateTokens.filter((token) => schemaTokens.has(token)).length;
+
+  if (overlapCount > 0) {
+    const overlapScore = overlapCount / Math.max(schemaTokens.size, candidateTokens.length, 1);
+    return { score: 70 + overlapScore * 20, reason: 'token overlap match' };
+  }
+
+  if (candidateNormalized.includes(schemaNormalized) || schemaNormalized.includes(candidateNormalized)) {
+    return { score: 75, reason: 'substring match' };
+  }
+
+  return { score: 0, reason: 'no confident match' };
+};
+
+const selectCandidateForField = ({ schemaKey, nodeKind, candidates, usedPaths, fieldPath }) => {
+  const availableCandidates = candidates.filter((candidate) => !usedPaths.has(candidate.path));
+
+  logger.info(
+    {
+      schemaKey,
+      fieldPath,
+      nodeKind,
+      candidateKeys: availableCandidates.map(describeCandidate),
+    },
+    'Schema normalization candidate keys discovered'
+  );
+
   let bestCandidate = null;
   let bestScore = 0;
 
-  candidates.forEach((candidate) => {
-    if (usedPaths.has(candidate.path)) {
+  availableCandidates.forEach((candidate) => {
+    const match = scoreCandidateMatch(schemaKey, nodeKind, candidate);
+
+    if (match.score <= 0) {
+      logger.info(
+        {
+          schemaKey,
+          fieldPath,
+          candidate: describeCandidate(candidate),
+          reason: match.reason,
+        },
+        'Schema normalization candidate rejected'
+      );
       return;
     }
 
-    const score = scoreCandidateMatch(schemaKey, expectedType, candidate);
+    logger.info(
+      {
+        schemaKey,
+        fieldPath,
+        candidate: describeCandidate(candidate),
+        score: match.score,
+        reason: match.reason,
+      },
+      'Schema normalization candidate scored'
+    );
 
-    if (score > bestScore) {
-      bestScore = score;
+    if (match.score > bestScore) {
+      bestScore = match.score;
       bestCandidate = candidate;
     }
   });
 
-  if (bestScore < 70) {
+  if (!bestCandidate || bestScore < 70) {
+    logger.info(
+      {
+        schemaKey,
+        fieldPath,
+        nodeKind,
+        bestScore,
+      },
+      'Schema normalization found no confident candidate'
+    );
+
     return null;
   }
+
+  logger.info(
+    {
+      schemaKey,
+      fieldPath,
+      chosenMappingKey: bestCandidate.key,
+      chosenMappingPath: bestCandidate.path,
+      score: bestScore,
+    },
+    'Schema normalization candidate selected'
+  );
 
   return bestCandidate;
 };
 
-const normalizeSchemaNode = (schemaNode, candidates, usedPaths, schemaKey = '') => {
-  if (typeof schemaNode === 'string') {
-    const candidate = pickBestCandidate(schemaKey, schemaNode, candidates, usedPaths);
+const normalizeSchemaNode = (schemaNode, data, candidates, usedPaths, fieldPath = '') => {
+  const nodeKind = inferNodeKind(schemaNode);
 
-    if (!candidate) {
-      return schemaNode === 'array' ? [] : null;
-    }
+  logger.info(
+    {
+      fieldPath,
+      nodeKind,
+    },
+    'Schema normalization processing field'
+  );
 
-    usedPaths.add(candidate.path);
-    return coerceValueToType(candidate.value, schemaNode);
-  }
-
-  if (schemaNode && typeof schemaNode === 'object' && !Array.isArray(schemaNode)) {
+  if (nodeKind === 'object' && schemaNode && !Array.isArray(schemaNode) && Object.keys(schemaNode).length > 0) {
     const normalizedObject = {};
 
     Object.entries(schemaNode).forEach(([childKey, childSchema]) => {
-      normalizedObject[childKey] = normalizeSchemaNode(childSchema, candidates, usedPaths, childKey);
+      const childPath = fieldPath ? `${fieldPath}.${childKey}` : childKey;
+      normalizedObject[childKey] = normalizeSchemaNode(childSchema, data, candidates, usedPaths, childPath);
     });
 
     return normalizedObject;
   }
 
-  return null;
+  const schemaKey = fieldPath.split('.').at(-1) || fieldPath;
+  const selectedCandidate = selectCandidateForField({ schemaKey, nodeKind, candidates, usedPaths, fieldPath });
+
+  if (!selectedCandidate) {
+    const fallback = nodeKind === 'array' ? [] : null;
+
+    logger.info(
+      {
+        fieldPath,
+        schemaKey,
+        fallback,
+      },
+      'Schema normalization using fallback value'
+    );
+
+    return fallback;
+  }
+
+  usedPaths.add(selectedCandidate.path);
+  const normalizedValue = coerceCandidateValue(selectedCandidate.value, nodeKind);
+
+  logger.info(
+    {
+      fieldPath,
+      schemaKey,
+      chosenMappingKey: selectedCandidate.key,
+      chosenMappingPath: selectedCandidate.path,
+      normalizedValue,
+    },
+    'Schema normalization field mapped'
+  );
+
+  return normalizedValue;
 };
 
 /**
@@ -514,18 +621,65 @@ const normalizeSchemaNode = (schemaNode, candidates, usedPaths, schemaKey = '') 
  * and fills missing fields with null or [] depending on the requested type.
  */
 export const validateAgainstSchema = (data, schema) => {
+  logger.info(
+    {
+      requestedSchema: schema,
+      parsedInputObject: data,
+    },
+    'Schema normalization input'
+  );
+
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    logger.info(
+      {
+        requestedSchema: schema,
+      },
+      'Schema normalization aborted because requested schema is invalid'
+    );
+
     return null;
   }
 
   const candidates = extractCandidateEntries(data);
   const usedPaths = new Set();
 
+  logger.info(
+    {
+      requestedSchema: schema,
+      candidateKeys: candidates.map(describeCandidate),
+    },
+    'Schema normalization candidate discovery complete'
+  );
+
   if (candidates.length === 0) {
-    return buildSchemaSkeleton(schema);
+    const skeleton = buildSchemaSkeleton(schema);
+
+    logger.info(
+      {
+        requestedSchema: schema,
+        finalNormalizedObject: skeleton,
+      },
+      'Schema normalization final object before return'
+    );
+
+    return skeleton;
   }
 
-  return normalizeSchemaNode(schema, candidates, usedPaths);
+  const normalized = {};
+
+  Object.entries(schema).forEach(([key, schemaNode]) => {
+    normalized[key] = normalizeSchemaNode(schemaNode, data, candidates, usedPaths, key);
+  });
+
+  logger.info(
+    {
+      requestedSchema: schema,
+      finalNormalizedObject: normalized,
+    },
+    'Schema normalization final object before return'
+  );
+
+  return normalized;
 };
 
 /**
