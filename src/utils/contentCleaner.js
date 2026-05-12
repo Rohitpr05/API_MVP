@@ -210,10 +210,11 @@ Use EXACTLY the schema keys provided below.
 Do NOT invent new keys.
 Do NOT rename keys.
 Do NOT omit keys.
-If a scalar value is missing, use null.
-If an array field has no items, return an empty array [].
 Arrays must remain arrays.
 Preserve exact field names.
+Extract the most likely matching value from the page content for each schema field.
+If the information is clearly visible or inferable from the content, populate the field.
+Use null only when the information truly does not exist anywhere in the content.
 Do not return markdown.
 Do not wrap the answer in code fences.
 Do not include explanations, commentary, or prose.
@@ -231,10 +232,13 @@ Requested schema:
   "services": "array"
 }
 
+Content contains:
+"NOVARES provides GST filing and MCA compliance tools"
+
 Correct output:
 {
   "companyName": "NOVARES",
-  "services": ["GST", "MCA"]
+  "services": ["GST filing", "MCA compliance"]
 }
 
 CONTENT:
