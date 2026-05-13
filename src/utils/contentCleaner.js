@@ -1,7 +1,7 @@
 // src/utils/contentCleaner.js
 // Utility functions for cleaning and preparing content for LLM extraction
 
-import { UnprocessableEntityError } from './errors.js';
+import { ApiError, UnprocessableEntityError } from './errors.js';
 import { logger } from './logger.js';
 
 const CODE_FENCE_PATTERN = /```(?:json)?\s*([\s\S]*?)```/i;
@@ -333,6 +333,11 @@ const buildSchemaSkeleton = (schema) => {
       return;
     }
 
+    if (nodeKind === 'object') {
+      skeleton[key] = {};
+      return;
+    }
+
     skeleton[key] = null;
   });
 
@@ -375,6 +380,41 @@ const describeCandidate = (candidate) => ({
   path: candidate.path,
   valueType: Array.isArray(candidate.value) ? 'array' : typeof candidate.value,
 });
+
+const BOT_PROTECTION_PATTERNS = [
+  'just a moment...',
+  'checking your browser',
+  'verify you are human',
+  'cloudflare',
+];
+
+const collectTextValues = (value, collected = []) => {
+  if (typeof value === 'string') {
+    collected.push(value);
+    return collected;
+  }
+
+  if (!value || typeof value !== 'object') {
+    return collected;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectTextValues(item, collected));
+    return collected;
+  }
+
+  Object.values(value).forEach((item) => collectTextValues(item, collected));
+  return collected;
+};
+
+const hasBotProtectionSignal = (value) => {
+  const textValues = collectTextValues(value);
+
+  return textValues.some((text) => {
+    const normalizedText = text.toLowerCase();
+    return BOT_PROTECTION_PATTERNS.some((pattern) => normalizedText.includes(pattern));
+  });
+};
 
 const coerceCandidateValue = (candidateValue, nodeKind) => {
   if (candidateValue === null || candidateValue === undefined) {
@@ -580,6 +620,19 @@ const normalizeSchemaNode = (schemaNode, data, candidates, usedPaths, fieldPath 
     return normalizedObject;
   }
 
+  if (nodeKind === 'object') {
+    logger.info(
+      {
+        fieldPath,
+        schemaKey: fieldPath.split('.').at(-1) || fieldPath,
+        fallback: {},
+      },
+      'Schema normalization using empty object fallback'
+    );
+
+    return {};
+  }
+
   const schemaKey = fieldPath.split('.').at(-1) || fieldPath;
   const selectedCandidate = selectCandidateForField({ schemaKey, nodeKind, candidates, usedPaths, fieldPath });
 
@@ -622,7 +675,19 @@ const normalizeSchemaNode = (schemaNode, data, candidates, usedPaths, fieldPath 
  */
 export const validateAgainstSchema = (data, schema) => {
   // Detailed entry trace
-  logger.info({ requestedSchema: schema, typeofSchema: typeof schema, isArraySchema: Array.isArray(schema), schemaKeys: Object.keys(schema || {}), parsedInputObject: data }, 'Schema normalization input');
+  logger.info({ requestedSchema: schema, typeofSchema: typeof schema, isArraySchema: Array.isArray(schema), schemaKeys: Object.keys(schema || {}), parsedJson: data, parsedInputObject: data }, 'Schema normalization input');
+
+  if (hasBotProtectionSignal(data)) {
+    logger.warn(
+      {
+        requestedSchema: schema,
+        parsedJson: data,
+      },
+      'Target site is protected by anti-bot systems'
+    );
+
+    throw new ApiError('Target site is protected by anti-bot systems', 403, 'BOT_PROTECTION');
+  }
 
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
     logger.info({ requestedSchema: schema }, 'Schema normalization aborted because requested schema is invalid');
@@ -651,18 +716,8 @@ export const validateAgainstSchema = (data, schema) => {
 
   logger.info({ requestedSchema: schema, finalNormalizedObject: normalized }, 'Schema normalization final object before return');
 
-  // Temporary sanity fallback to demonstrate mapper path in production
   if (normalized && Object.keys(normalized).length === 0 && data && Object.keys(data).length > 0) {
-    logger.warn({ parsedJson: data, schema }, 'Normalization collapsed unexpectedly');
-
-    const fallback = {
-      companyName: data.companyName || 'NOVARES',
-      mainHeadline: data.mainHeadline || null,
-      services: data.features || [],
-    };
-
-    logger.warn({ fallback }, 'Returning temporary fallback normalization');
-    return fallback;
+    logger.warn({ parsedJson: data, schema, finalNormalizedObject: normalized }, 'Normalization collapsed unexpectedly');
   }
 
   return normalized;
