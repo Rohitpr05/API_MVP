@@ -720,7 +720,16 @@ export const validateAgainstSchema = (data, schema) => {
     logger.warn({ parsedJson: data, schema, finalNormalizedObject: normalized }, 'Normalization collapsed unexpectedly');
   }
 
-  return normalized;
+  const exactReturnedObject = normalized;
+
+  logger.info(
+    {
+      exactReturnedObject,
+    },
+    'Schema normalization exact return object'
+  );
+
+  return exactReturnedObject;
 };
 
 /**
