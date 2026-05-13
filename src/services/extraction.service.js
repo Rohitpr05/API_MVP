@@ -74,8 +74,8 @@ export const extractFromUrl = async (extractionData) => {
     const browserTimeout = Math.min(config.pageGotoTimeout, extractionTimeout);
 
     logger.info(
-      { extractionId, url, model },
-      'Starting extraction pipeline'
+      { extractionId, url, schema, schemaKeys: Object.keys(schema || {}), typeofSchema: typeof schema },
+      'Starting extraction pipeline with schema'
     );
 
     const result = await withTimeout((async () => {
@@ -85,12 +85,18 @@ export const extractFromUrl = async (extractionData) => {
       const cleanedContent = cleanContent(pageData.content, config.extractionMaxContentLength);
 
       // Step 2: Prepare extraction prompt
+      logger.info(
+        { extractionId, schema, schemaKeys: Object.keys(schema || {}), typeofSchema: typeof schema },
+        'Schema before prepareExtractionPrompt()'
+      );
+
       const prompt = prepareExtractionPrompt(cleanedContent, schema);
 
       logger.info(
         {
           extractionId,
           prompt,
+          schemaInPrompt: prompt.includes('"schema"'),
         },
         'Final prompt sent to OpenRouter'
       );

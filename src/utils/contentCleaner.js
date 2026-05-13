@@ -202,7 +202,17 @@ export const cleanContent = (content, maxLength = 12000) => {
  * Prepare content and schema for LLM extraction prompt
  */
 export const prepareExtractionPrompt = (content, schema) => {
+  logger.info(
+    { schema, schemaKeys: Object.keys(schema || {}), typeofSchema: typeof schema, schemaEmpty: Object.keys(schema || {}).length === 0 },
+    'prepareExtractionPrompt received schema'
+  );
+
   const schemaJson = JSON.stringify(schema, null, 2);
+
+  logger.info(
+    { schemaJson, schemaJsonLength: schemaJson.length },
+    'Schema JSON stringified in prepareExtractionPrompt'
+  );
 
   const prompt = `Extract structured data from the webpage content.
 
@@ -218,6 +228,11 @@ ${schemaJson}
 
 Webpage Content:
 ${content}`;
+
+  logger.info(
+    { promptLength: prompt.length, schemaInPrompt: prompt.includes('Schema:'), schemaInPromptLength: prompt.split('Schema:')[1]?.split('Webpage')[0]?.length || 0 },
+    'Final prompt built in prepareExtractionPrompt'
+  );
 
   return prompt;
 };

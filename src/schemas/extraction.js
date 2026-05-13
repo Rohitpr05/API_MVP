@@ -6,10 +6,13 @@ import { z } from 'zod';
 /**
  * Extraction request schema
  * Define what the client should send for extraction
+ * Accepts both type-name format and template-value format:
+ *   Type-name: { "companyName": "string", "features": "array" }
+ *   Template-value: { "companyName": null, "features": [] }
  */
 export const extractionRequestSchema = z.object({
   url: z.string().url('Invalid URL'),
-  schema: z.record(z.string(), z.enum(['string', 'number', 'boolean', 'array', 'object'])),
+  schema: z.record(z.string(), z.any()),
   options: z
     .object({
       model: z.string().optional(),

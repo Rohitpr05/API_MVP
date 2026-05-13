@@ -36,10 +36,14 @@ export const health = async (request, reply) => {
 export const extract = async (request, reply) => {
   try {
     // Validate request body
+    logger.info({ rawRequestBody: request.body }, 'Raw request body received');
+    
     const validated = extractionRequestSchema.parse(request.body);
+    
+    logger.info({ validatedRequest: validated, schemaKeys: Object.keys(validated.schema || {}) }, 'Request validation complete');
     const startedAt = Date.now();
 
-    logger.info({ url: validated.url }, 'Processing extraction request');
+    logger.info({ url: validated.url, schema: validated.schema, schemaKeys: Object.keys(validated.schema || {}) }, 'Processing extraction request with schema');
 
     // Extract data (no user tracking needed - RapidAPI handles it)
     const result = await extractFromUrl(validated);
