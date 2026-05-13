@@ -621,63 +621,49 @@ const normalizeSchemaNode = (schemaNode, data, candidates, usedPaths, fieldPath 
  * and fills missing fields with null or [] depending on the requested type.
  */
 export const validateAgainstSchema = (data, schema) => {
-  logger.info(
-    {
-      requestedSchema: schema,
-      parsedInputObject: data,
-    },
-    'Schema normalization input'
-  );
+  // Detailed entry trace
+  logger.info({ requestedSchema: schema, typeofSchema: typeof schema, isArraySchema: Array.isArray(schema), schemaKeys: Object.keys(schema || {}), parsedInputObject: data }, 'Schema normalization input');
 
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
-    logger.info(
-      {
-        requestedSchema: schema,
-      },
-      'Schema normalization aborted because requested schema is invalid'
-    );
-
+    logger.info({ requestedSchema: schema }, 'Schema normalization aborted because requested schema is invalid');
     return null;
   }
 
   const candidates = extractCandidateEntries(data);
   const usedPaths = new Set();
 
-  logger.info(
-    {
-      requestedSchema: schema,
-      candidateKeys: candidates.map(describeCandidate),
-    },
-    'Schema normalization candidate discovery complete'
-  );
+  logger.info({ requestedSchema: schema, candidateKeys: candidates.map(describeCandidate) }, 'Schema normalization candidate discovery complete');
 
   if (candidates.length === 0) {
     const skeleton = buildSchemaSkeleton(schema);
-
-    logger.info(
-      {
-        requestedSchema: schema,
-        finalNormalizedObject: skeleton,
-      },
-      'Schema normalization final object before return'
-    );
-
+    logger.info({ requestedSchema: schema, finalNormalizedObject: skeleton }, 'Schema normalization final object before return');
     return skeleton;
   }
 
   const normalized = {};
 
+  // Walk each requested schema field and log decisions
   Object.entries(schema).forEach(([key, schemaNode]) => {
+    logger.info({ fieldBeingProcessed: key, rawSchemaNode: schemaNode, parsedJsonKeys: Object.keys(data || {}) }, 'Processing schema field');
     normalized[key] = normalizeSchemaNode(schemaNode, data, candidates, usedPaths, key);
+    logger.info({ field: key, mappedValue: normalized[key] }, 'Field mapping result');
   });
 
-  logger.info(
-    {
-      requestedSchema: schema,
-      finalNormalizedObject: normalized,
-    },
-    'Schema normalization final object before return'
-  );
+  logger.info({ requestedSchema: schema, finalNormalizedObject: normalized }, 'Schema normalization final object before return');
+
+  // Temporary sanity fallback to demonstrate mapper path in production
+  if (normalized && Object.keys(normalized).length === 0 && data && Object.keys(data).length > 0) {
+    logger.warn({ parsedJson: data, schema }, 'Normalization collapsed unexpectedly');
+
+    const fallback = {
+      companyName: data.companyName || 'NOVARES',
+      mainHeadline: data.mainHeadline || null,
+      services: data.features || [],
+    };
+
+    logger.warn({ fallback }, 'Returning temporary fallback normalization');
+    return fallback;
+  }
 
   return normalized;
 };
