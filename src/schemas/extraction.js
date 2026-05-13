@@ -5,13 +5,15 @@ import { z } from 'zod';
 
 const schemaTypeNames = ['string', 'number', 'boolean', 'array', 'object'];
 
+const schemaNodeDefinitions = [
+  z.enum(schemaTypeNames),
+  z.null(),
+  z.array(z.unknown()).length(0, 'Array schema placeholders must be empty arrays'),
+  z.record(z.string(), z.lazy(() => schemaValueSchema)),
+];
+
 const schemaValueSchema = z.lazy(() =>
-  z.union([
-    z.enum(schemaTypeNames),
-    z.null(),
-    z.array(z.unknown()).length(0, 'Array schema placeholders must be empty arrays'),
-    z.record(z.string(), schemaValueSchema),
-  ])
+  z.union(schemaNodeDefinitions)
 );
 
 /**
