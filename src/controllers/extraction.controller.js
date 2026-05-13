@@ -36,14 +36,47 @@ export const health = async (request, reply) => {
 export const extract = async (request, reply) => {
   try {
     // Validate request body
-    logger.info({ rawRequestBody: request.body }, 'Raw request body received');
-    
-    const validated = extractionRequestSchema.parse(request.body);
-    
-    logger.info({ validatedRequest: validated, schemaKeys: Object.keys(validated.schema || {}) }, 'Request validation complete');
+    logger.info({ rawSchema: request.body?.schema }, 'Raw incoming schema received');
+
+    const validationResult = extractionRequestSchema.safeParse(request.body);
+
+    if (!validationResult.success) {
+      const rejectedSchemaFields = validationResult.error.issues.map((issue) => ({
+        path: issue.path.join('.'),
+        message: issue.message,
+        received: issue.received,
+        expected: issue.expected,
+        code: issue.code,
+      }));
+
+      logger.warn(
+        { rawSchema: request.body?.schema, rejectedSchemaFields },
+        'Schema validation rejected incoming schema'
+      );
+
+      return reply.status(400).send(
+        errorResponse(
+          {
+            message: 'Validation failed',
+            details: rejectedSchemaFields,
+          },
+          400
+        )
+      );
+    }
+
+    const validated = validationResult.data;
+
+    logger.info(
+      { validatedSchema: validated.schema, schemaKeys: Object.keys(validated.schema || {}) },
+      'Schema validation complete'
+    );
     const startedAt = Date.now();
 
-    logger.info({ url: validated.url, schema: validated.schema, schemaKeys: Object.keys(validated.schema || {}) }, 'Processing extraction request with schema');
+    logger.info(
+      { url: validated.url, validatedSchema: validated.schema, schemaKeys: Object.keys(validated.schema || {}) },
+      'Final validated schema before extraction pipeline'
+    );
 
     // Extract data (no user tracking needed - RapidAPI handles it)
     const result = await extractFromUrl(validated);

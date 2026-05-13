@@ -3,6 +3,17 @@
 
 import { z } from 'zod';
 
+const schemaTypeNames = ['string', 'number', 'boolean', 'array', 'object'];
+
+const schemaValueSchema = z.lazy(() =>
+  z.union([
+    z.enum(schemaTypeNames),
+    z.null(),
+    z.array(z.unknown()).length(0, 'Array schema placeholders must be empty arrays'),
+    z.record(z.string(), schemaValueSchema),
+  ])
+);
+
 /**
  * Extraction request schema
  * Define what the client should send for extraction
@@ -12,7 +23,7 @@ import { z } from 'zod';
  */
 export const extractionRequestSchema = z.object({
   url: z.string().url('Invalid URL'),
-  schema: z.record(z.string(), z.any()),
+  schema: z.record(z.string(), schemaValueSchema),
   options: z
     .object({
       model: z.string().optional(),
