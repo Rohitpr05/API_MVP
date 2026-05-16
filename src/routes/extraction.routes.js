@@ -25,12 +25,12 @@ const extractionBodySchema = {
     },
     schema: {
       type: 'object',
-      description: 'Field map describing the output shape',
-      additionalProperties: {
-        type: 'string',
-        enum: ['string', 'number', 'boolean', 'array', 'object'],
-      },
-      examples: [{ title: 'string', price: 'number' }],
+      description: 'Field map describing the output shape. Supports type-names (string) or template-values (null, [], {}).',
+      // CRITICAL FIX: Do NOT specify additionalProperties here!
+      // Fastify AJV with removeAdditional:'all' will strip properties even if additionalProperties: true
+      // By omitting additionalProperties, the schema object will preserve all properties
+      // Zod validation will handle detailed type checking
+      examples: [{ title: 'string', price: 'number' }, { companyName: null }],
     },
     options: {
       type: 'object',
