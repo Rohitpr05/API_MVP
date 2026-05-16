@@ -30,7 +30,11 @@ const extractionBodySchema = {
       // Fastify AJV with removeAdditional:'all' will strip properties even if additionalProperties: true
       // By omitting additionalProperties, the schema object will preserve all properties
       // Zod validation will handle detailed type checking
-      examples: [{ title: 'string', price: 'number' }, { companyName: null }],
+      examples: [
+        { title: 'string', price: 'number' },
+        { companyName: null },
+        { product: { name: null, price: 'number', features: [] } },
+      ],
     },
     options: {
       type: 'object',
@@ -91,6 +95,10 @@ const errorResponseSchema = {
     code: { type: 'string', example: 'INVALID_API_KEY' },
     timestamp: { type: 'string', format: 'date-time' },
   },
+  examples: [
+    { success: false, code: 'RATE_LIMIT_EXCEEDED', message: 'Rate limit exceeded', timestamp: '2026-01-01T00:00:00Z' },
+    { success: false, code: 'INVALID_SCHEMA', message: 'Invalid schema', timestamp: '2026-01-01T00:00:00Z' },
+  ],
 };
 
 /**

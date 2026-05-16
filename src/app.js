@@ -10,6 +10,9 @@ import { logger } from './utils/logger.js';
 // Import plugins
 import { registerCorsPlugin } from './plugins/cors.js';
 import { registerHelmetPlugin } from './plugins/helmet.js';
+import registerRateLimit from './plugins/rateLimit.js';
+import { InvalidSchemaError, RequestTooLargeError } from './utils/errors.js';
+import { countSchemaKeys, schemaDepth } from './utils/schemaUtils.js';
 
 // Import routes
 import { registerExtractionRoutes } from './routes/extraction.routes.js';
@@ -35,6 +38,40 @@ async function createApp() {
   // Register plugins
   await registerHelmetPlugin(fastify);
   await registerCorsPlugin(fastify);
+  // Register rate limiter plugin
+  await fastify.register(registerRateLimit);
+
+  // Pre-validation: enforce request limits and schema constraints
+  fastify.addHook('preValidation', async (request, reply) => {
+    try {
+      if (request.method === 'POST' && request.url === '/extract') {
+        const body = request.body || {};
+
+        // URL length check
+        if (body.url && String(body.url).length > 2048) {
+          throw new RequestTooLargeError('URL exceeds maximum allowed length');
+        }
+
+        // Schema sanity checks
+        const schema = body.schema;
+        if (schema) {
+          const depth = schemaDepth(schema);
+          const keyCount = countSchemaKeys(schema);
+
+          if (depth > (config.maxSchemaDepth || 6)) {
+            throw new InvalidSchemaError('Schema depth exceeds maximum allowed');
+          }
+
+          if (keyCount > (config.maxSchemaKeys || 100)) {
+            throw new InvalidSchemaError('Schema contains too many keys');
+          }
+        }
+      }
+    } catch (err) {
+      // Let Fastify error handler format response
+      reply.send(err);
+    }
+  });
 
   // Register Swagger/OpenAPI for RapidAPI marketplace
   await fastify.register(fastifySwagger, {

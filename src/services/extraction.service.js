@@ -73,10 +73,7 @@ export const extractFromUrl = async (extractionData) => {
     const extractionTimeout = options.timeout || config.extractionTimeout;
     const browserTimeout = Math.min(config.pageGotoTimeout, extractionTimeout);
 
-    logger.info(
-      { extractionId, url, schema, schemaKeys: Object.keys(schema || {}), typeofSchema: typeof schema },
-      'Starting extraction pipeline with schema'
-    );
+    logger.info({ extractionId, url }, 'Starting extraction pipeline');
 
     const result = await withTimeout((async () => {
       // Step 1: Extract page content using Playwright
@@ -85,21 +82,11 @@ export const extractFromUrl = async (extractionData) => {
       const cleanedContent = cleanContent(pageData.content, config.extractionMaxContentLength);
 
       // Step 2: Prepare extraction prompt
-      logger.info(
-        { extractionId, schema, schemaKeys: Object.keys(schema || {}), typeofSchema: typeof schema },
-        'Schema before prepareExtractionPrompt()'
-      );
+      logger.debug({ extractionId, schemaKeys: Object.keys(schema || {}) }, 'Preparing prompt (debug)');
 
       const prompt = prepareExtractionPrompt(cleanedContent, schema);
 
-      logger.info(
-        {
-          extractionId,
-          prompt,
-          schemaInPrompt: prompt.includes('"schema"'),
-        },
-        'Final prompt sent to OpenRouter'
-      );
+      logger.debug({ extractionId, promptLength: prompt.length }, 'Prompt prepared (debug)');
 
       // Step 3: Call OpenRouter API
       logger.debug({ extractionId, model }, 'Calling OpenRouter API');
@@ -120,66 +107,32 @@ export const extractFromUrl = async (extractionData) => {
 
       const elapsed = Date.now() - startTime;
 
-      logger.debug(
-        { extractionId, elapsed, model },
-        'OpenRouter response received'
-      );
+      logger.debug({ extractionId, elapsed, model }, 'OpenRouter response received (debug)');
 
       // Step 4: Parse and validate response
       const rawResponseText = extractModelResponseText(response);
       const cleanedResponseText = prepareJsonResponseText(response);
 
-      logger.info(
-        {
-          extractionId,
-          rawResponseText: truncateForLog(rawResponseText),
-        },
-        'Raw LLM response text'
-      );
-
-      logger.info(
-        {
-          extractionId,
-          cleanedResponseText: truncateForLog(cleanedResponseText),
-        },
-        'Cleaned LLM response text'
-      );
+      logger.debug({ extractionId, rawResponseSnippet: truncateForLog(rawResponseText, 2000) }, 'Raw LLM response (debug)');
+      logger.debug({ extractionId, cleanedResponseSnippet: truncateForLog(cleanedResponseText, 2000) }, 'Cleaned LLM response (debug)');
 
       let extractedData;
 
       try {
         extractedData = parseJsonResponse(cleanedResponseText);
       } catch (parseError) {
-        logger.info(
-          {
-            extractionId,
-            rawResponseText: truncateForLog(rawResponseText),
-            cleanedResponseText: truncateForLog(cleanedResponseText),
-            parseError: parseError.message,
-          },
-          'JSON parse failure'
-        );
+        logger.debug({ extractionId, parseError: parseError.message }, 'JSON parse failure (debug)');
 
         throw parseError;
       }
 
-      logger.info(
-        { extractionId, parsedJson: extractedData },
-        'Parsed JSON object'
-      );
+      logger.debug({ extractionId, parsedJsonKeys: Object.keys(extractedData || {}) }, 'Parsed JSON object (debug)');
 
       const validatedData = validateAgainstSchema(extractedData, schema);
       // Always use validated data - strict schema conformance required
       const finalData = validatedData;
 
-      logger.info(
-        {
-          extractionId,
-          finalData,
-          validatedData,
-        },
-        'Final extraction data payload'
-      );
+      logger.debug({ extractionId, finalDataKeys: Object.keys(finalData || {}) }, 'Final extraction data payload (debug)');
 
       // Step 5: Format usage info
       const usage = formatUsageInfo(response.usage, model);
@@ -196,10 +149,7 @@ export const extractFromUrl = async (extractionData) => {
         timestamp: new Date().toISOString(),
       };
 
-      logger.info(
-        { extractionId, extractionResult },
-        'Final extraction service return value'
-      );
+      logger.debug({ extractionId, extractionResultSummary: { extractionId, source: extractionResult.source, timestamp: extractionResult.timestamp } }, 'Final extraction service return value (debug)');
 
       return extractionResult;
     })(), extractionTimeout, `Extraction timed out after ${extractionTimeout}ms`);

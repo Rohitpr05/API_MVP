@@ -7,8 +7,6 @@ dotenv.config();
 
 const timeoutMs = Number(process.env.EXTRACTION_TIMEOUT || 45000);
 
-console.log('Extraction timeout:', timeoutMs);
-
 const requiredEnvVars = [
   'NODE_ENV',
   'PORT',
@@ -48,11 +46,18 @@ export const config = {
 
   // Extraction settings
   extractionTimeout: timeoutMs,
-  extractionMaxContentLength: parseInt(process.env.EXTRACTION_MAX_CONTENT || '12000', 10),
+  // Maximum characters to keep from extracted page content before sending to LLM
+  extractionMaxContentLength: parseInt(process.env.MAX_CONTENT_CHARS || process.env.EXTRACTION_MAX_CONTENT || '12000', 10),
   defaultExtractionModel: process.env.EXTRACTION_MODEL || 'openai/gpt-4o-mini',
 
+  // Production tunables (configurable via environment)
+  rateLimitPerMinute: parseInt(process.env.RATE_LIMIT || '60', 10),
+  maxSchemaDepth: parseInt(process.env.MAX_SCHEMA_DEPTH || '6', 10),
+  maxSchemaKeys: parseInt(process.env.MAX_SCHEMA_KEYS || '100', 10),
+  requestTimeoutMs: parseInt(process.env.REQUEST_TIMEOUT_MS || String(timeoutMs), 10),
+
   // Feature flags
-  isDevelopment: process.env.NODE_ENV === 'development',
+  isDevelopment: process.env.NODE_ENV !== 'production',
   isProduction: process.env.NODE_ENV === 'production',
 };
 

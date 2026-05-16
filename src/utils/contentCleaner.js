@@ -1,7 +1,7 @@
 // src/utils/contentCleaner.js
 // Utility functions for cleaning and preparing content for LLM extraction
 
-import { ApiError, UnprocessableEntityError } from './errors.js';
+import { ApiError, UnprocessableEntityError, BotProtectionError } from './errors.js';
 import { logger } from './logger.js';
 
 const CODE_FENCE_PATTERN = /```(?:json)?\s*([\s\S]*?)```/i;
@@ -202,17 +202,14 @@ export const cleanContent = (content, maxLength = 12000) => {
  * Prepare content and schema for LLM extraction prompt
  */
 export const prepareExtractionPrompt = (content, schema) => {
-  logger.info(
-    { schema, schemaKeys: Object.keys(schema || {}), typeofSchema: typeof schema, schemaEmpty: Object.keys(schema || {}).length === 0 },
-    'prepareExtractionPrompt received schema'
+  logger.debug(
+    { schemaKeys: Object.keys(schema || {}), typeofSchema: typeof schema, schemaEmpty: Object.keys(schema || {}).length === 0 },
+    'prepareExtractionPrompt received schema (debug)'
   );
 
   const schemaJson = JSON.stringify(schema, null, 2);
 
-  logger.info(
-    { schemaJson, schemaJsonLength: schemaJson.length },
-    'Schema JSON stringified in prepareExtractionPrompt'
-  );
+  logger.debug({ schemaJsonLength: schemaJson.length }, 'Schema JSON stringified in prepareExtractionPrompt (debug)');
 
   const prompt = `Extract structured data from the webpage content.
 
@@ -229,10 +226,7 @@ ${schemaJson}
 Webpage Content:
 ${content}`;
 
-  logger.info(
-    { promptLength: prompt.length, schemaInPrompt: prompt.includes('Schema:'), schemaInPromptLength: prompt.split('Schema:')[1]?.split('Webpage')[0]?.length || 0 },
-    'Final prompt built in prepareExtractionPrompt'
-  );
+  logger.debug({ promptLength: prompt.length }, 'Final prompt built in prepareExtractionPrompt (debug)');
 
   return prompt;
 };
@@ -546,7 +540,7 @@ const selectCandidateForField = ({ schemaKey, nodeKind, candidates, usedPaths, f
       nodeKind,
       candidateKeys: availableCandidates.map(describeCandidate),
     },
-    'Schema normalization candidate keys discovered'
+      'Schema normalization candidate keys discovered (debug)'
   );
 
   let bestCandidate = null;
@@ -556,28 +550,11 @@ const selectCandidateForField = ({ schemaKey, nodeKind, candidates, usedPaths, f
     const match = scoreCandidateMatch(schemaKey, nodeKind, candidate);
 
     if (match.score <= 0) {
-      logger.info(
-        {
-          schemaKey,
-          fieldPath,
-          candidate: describeCandidate(candidate),
-          reason: match.reason,
-        },
-        'Schema normalization candidate rejected'
-      );
+      logger.debug({ schemaKey, fieldPath, candidate: describeCandidate(candidate), reason: match.reason }, 'Schema normalization candidate rejected (debug)');
       return;
     }
 
-    logger.info(
-      {
-        schemaKey,
-        fieldPath,
-        candidate: describeCandidate(candidate),
-        score: match.score,
-        reason: match.reason,
-      },
-      'Schema normalization candidate scored'
-    );
+    logger.debug({ schemaKey, fieldPath, candidate: describeCandidate(candidate), score: match.score, reason: match.reason }, 'Schema normalization candidate scored (debug)');
 
     if (match.score > bestScore) {
       bestScore = match.score;
@@ -586,29 +563,12 @@ const selectCandidateForField = ({ schemaKey, nodeKind, candidates, usedPaths, f
   });
 
   if (!bestCandidate || bestScore < 70) {
-    logger.info(
-      {
-        schemaKey,
-        fieldPath,
-        nodeKind,
-        bestScore,
-      },
-      'Schema normalization found no confident candidate'
-    );
+    logger.debug({ schemaKey, fieldPath, nodeKind, bestScore }, 'Schema normalization found no confident candidate (debug)');
 
     return null;
   }
 
-  logger.info(
-    {
-      schemaKey,
-      fieldPath,
-      chosenMappingKey: bestCandidate.key,
-      chosenMappingPath: bestCandidate.path,
-      score: bestScore,
-    },
-    'Schema normalization candidate selected'
-  );
+    logger.debug({ schemaKey, fieldPath, chosenMappingKey: bestCandidate.key, score: bestScore }, 'Schema normalization candidate selected (debug)');
 
   return bestCandidate;
 };
@@ -616,13 +576,7 @@ const selectCandidateForField = ({ schemaKey, nodeKind, candidates, usedPaths, f
 const normalizeSchemaNode = (schemaNode, data, candidates, usedPaths, fieldPath = '') => {
   const nodeKind = inferNodeKind(schemaNode);
 
-  logger.info(
-    {
-      fieldPath,
-      nodeKind,
-    },
-    'Schema normalization processing field'
-  );
+  logger.debug({ fieldPath, nodeKind }, 'Schema normalization processing field (debug)');
 
   if (nodeKind === 'object' && schemaNode && !Array.isArray(schemaNode) && Object.keys(schemaNode).length > 0) {
     const normalizedObject = {};
@@ -636,14 +590,7 @@ const normalizeSchemaNode = (schemaNode, data, candidates, usedPaths, fieldPath 
   }
 
   if (nodeKind === 'object') {
-    logger.info(
-      {
-        fieldPath,
-        schemaKey: fieldPath.split('.').at(-1) || fieldPath,
-        fallback: {},
-      },
-      'Schema normalization using empty object fallback'
-    );
+    logger.debug({ fieldPath, schemaKey: fieldPath.split('.').at(-1) || fieldPath, fallback: {} }, 'Schema normalization using empty object fallback (debug)');
 
     return {};
   }
@@ -654,14 +601,7 @@ const normalizeSchemaNode = (schemaNode, data, candidates, usedPaths, fieldPath 
   if (!selectedCandidate) {
     const fallback = nodeKind === 'array' ? [] : null;
 
-    logger.info(
-      {
-        fieldPath,
-        schemaKey,
-        fallback,
-      },
-      'Schema normalization using fallback value'
-    );
+    logger.debug({ fieldPath, schemaKey, fallback }, 'Schema normalization using fallback value (debug)');
 
     return fallback;
   }
@@ -669,16 +609,7 @@ const normalizeSchemaNode = (schemaNode, data, candidates, usedPaths, fieldPath 
   usedPaths.add(selectedCandidate.path);
   const normalizedValue = coerceCandidateValue(selectedCandidate.value, nodeKind);
 
-  logger.info(
-    {
-      fieldPath,
-      schemaKey,
-      chosenMappingKey: selectedCandidate.key,
-      chosenMappingPath: selectedCandidate.path,
-      normalizedValue,
-    },
-    'Schema normalization field mapped'
-  );
+  logger.debug({ fieldPath, schemaKey, chosenMappingKey: selectedCandidate.key, chosenMappingPath: selectedCandidate.path, normalizedValue }, 'Schema normalization field mapped (debug)');
 
   return normalizedValue;
 };
@@ -690,33 +621,27 @@ const normalizeSchemaNode = (schemaNode, data, candidates, usedPaths, fieldPath 
  */
 export const validateAgainstSchema = (data, schema) => {
   // Detailed entry trace
-  logger.info({ requestedSchema: schema, typeofSchema: typeof schema, isArraySchema: Array.isArray(schema), schemaKeys: Object.keys(schema || {}), parsedJson: data, parsedInputObject: data }, 'Schema normalization input');
+  logger.debug({ typeofSchema: typeof schema, isArraySchema: Array.isArray(schema), schemaKeys: Object.keys(schema || {}), parsedJsonKeys: Object.keys(data || {}) }, 'Schema normalization input (debug)');
 
   if (hasBotProtectionSignal(data)) {
-    logger.warn(
-      {
-        requestedSchema: schema,
-        parsedJson: data,
-      },
-      'Target site is protected by anti-bot systems'
-    );
+    logger.warn({ requestedSchema: schema, parsedJson: data }, 'Target site is protected by anti-bot systems');
 
-    throw new ApiError('Target site is protected by anti-bot systems', 403, 'BOT_PROTECTION');
+    throw new BotProtectionError();
   }
 
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
-    logger.info({ requestedSchema: schema }, 'Schema normalization aborted because requested schema is invalid');
+    logger.debug({ requestedSchema: schema }, 'Schema normalization aborted because requested schema is invalid (debug)');
     return null;
   }
 
   const candidates = extractCandidateEntries(data);
   const usedPaths = new Set();
 
-  logger.info({ requestedSchema: schema, candidateKeys: candidates.map(describeCandidate) }, 'Schema normalization candidate discovery complete');
+  logger.debug({ candidateKeys: candidates.map(describeCandidate) }, 'Schema normalization candidate discovery complete (debug)');
 
   if (candidates.length === 0) {
     const skeleton = buildSchemaSkeleton(schema);
-    logger.info({ requestedSchema: schema, finalNormalizedObject: skeleton }, 'Schema normalization final object before return');
+    logger.debug({ finalNormalizedObject: skeleton }, 'Schema normalization final object before return (debug)');
     return skeleton;
   }
 
@@ -724,12 +649,12 @@ export const validateAgainstSchema = (data, schema) => {
 
   // Walk each requested schema field and log decisions
   Object.entries(schema).forEach(([key, schemaNode]) => {
-    logger.info({ fieldBeingProcessed: key, rawSchemaNode: schemaNode, parsedJsonKeys: Object.keys(data || {}) }, 'Processing schema field');
+    logger.debug({ fieldBeingProcessed: key, parsedJsonKeys: Object.keys(data || {}) }, 'Processing schema field (debug)');
     normalized[key] = normalizeSchemaNode(schemaNode, data, candidates, usedPaths, key);
-    logger.info({ field: key, mappedValue: normalized[key] }, 'Field mapping result');
+    logger.debug({ field: key }, 'Field mapping result (debug)');
   });
 
-  logger.info({ requestedSchema: schema, finalNormalizedObject: normalized }, 'Schema normalization final object before return');
+  logger.debug({ finalNormalizedObject: normalized }, 'Schema normalization final object before return (debug)');
 
   if (normalized && Object.keys(normalized).length === 0 && data && Object.keys(data).length > 0) {
     logger.warn({ parsedJson: data, schema, finalNormalizedObject: normalized }, 'Normalization collapsed unexpectedly');
@@ -737,12 +662,7 @@ export const validateAgainstSchema = (data, schema) => {
 
   const exactReturnedObject = normalized;
 
-  logger.info(
-    {
-      exactReturnedObject,
-    },
-    'Schema normalization exact return object'
-  );
+  logger.debug({ exactReturnedObject }, 'Schema normalization exact return object (debug)');
 
   return exactReturnedObject;
 };

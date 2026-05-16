@@ -8,6 +8,7 @@ import {
   extractFromUrl,
 } from '../services/extraction.service.js';
 import { successResponse, errorResponse } from '../utils/response.js';
+import { InvalidSchemaError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -35,8 +36,7 @@ export const health = async (request, reply) => {
  */
 export const extract = async (request, reply) => {
   try {
-    // Validate request body
-    logger.info({ rawSchema: request.body?.schema }, 'Raw incoming schema received');
+    // Validate request body (minimal logging)
 
     const validationResult = extractionRequestSchema.safeParse(request.body);
 
@@ -67,43 +67,22 @@ export const extract = async (request, reply) => {
 
     const validated = validationResult.data;
 
-    logger.info(
-      { validatedSchema: validated.schema, schemaKeys: Object.keys(validated.schema || {}) },
-      'Schema validation complete'
-    );
     const startedAt = Date.now();
-
-    logger.info(
-      { url: validated.url, validatedSchema: validated.schema, schemaKeys: Object.keys(validated.schema || {}) },
-      'Final validated schema before extraction pipeline'
-    );
 
     // Extract data (no user tracking needed - RapidAPI handles it)
     const result = await extractFromUrl(validated);
 
     const responsePayload = successResponse(result, 'Extraction successful');
 
-    logger.info(
-      { url: validated.url, durationMs: Date.now() - startedAt, tokensUsed: result?.usage?.tokensUsed || 0 },
-      'Extraction request completed'
-    );
-
-    logger.info(
-      { url: validated.url, responsePayload },
-      'Final response payload before send'
-    );
+    logger.info({ url: validated.url, durationMs: Date.now() - startedAt }, 'Extraction request completed');
 
     return reply.status(200).send(responsePayload);
   } catch (error) {
     logger.error({ error }, 'Extraction error');
 
     if (error.name === 'ZodError') {
-      return reply.status(400).send(
-        errorResponse({
-          message: 'Validation failed',
-          details: error.errors,
-        }, 400)
-      );
+      const err = new InvalidSchemaError('Validation failed');
+      return reply.status(400).send(errorResponse(err, 400));
     }
 
     const statusCode = error.statusCode || 500;
