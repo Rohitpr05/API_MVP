@@ -9,6 +9,50 @@ import { assertSafeHttpUrl } from '../utils/urlSafety.js';
 
 const NETWORK_IDLE_TIMEOUT = 5000;
 
+// Simple local timeout helper (kept here to avoid cross-file deps)
+const withTimeout = async (promise, timeoutMs, message) => {
+  let timeoutId;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new TimeoutError(message));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+// Persistent browser instance for reuse across requests
+let browserInstance = null;
+
+const getBrowser = async () => {
+  if (browserInstance) {
+    return browserInstance;
+  }
+
+  browserInstance = await chromium.launch({
+    headless: true,
+    timeout: config.browserLaunchTimeout,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+  });
+
+  // Monitor for disconnects/crashes and reset singleton
+  try {
+    browserInstance.on('disconnected', () => {
+      logger.warn('Persistent browser disconnected; will relaunch on next request');
+      browserInstance = null;
+    });
+  } catch (e) {
+    logger.debug({ err: e.message }, 'Failed to attach disconnected listener (debug)');
+  }
+
+  return browserInstance;
+};
+
 /**
  * Extract webpage content using Playwright
  *
@@ -21,52 +65,63 @@ export const extractPageContent = async (
   timeout = config.pageGotoTimeout,
   maxContentLength = config.extractionMaxContentLength
 ) => {
-  let browser;
-  let page;
+  let browser = null;
+  let context = null;
+  let page = null;
 
   try {
     const safeUrl = await assertSafeHttpUrl(url);
 
-    logger.info({ 
-        url: safeUrl.href }, 'Starting browser extraction');
+    logger.info({ url: safeUrl.href }, 'Starting browser extraction');
 
-    // Launch headless browser
-    browser = await chromium.launch({
-      headless: true,
-      timeout: config.browserLaunchTimeout,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-      ],
-    });
+    // Acquire persistent browser instance
+    browser = await getBrowser();
 
-    // Create new page
-    page = await browser.newPage();
+    // Create isolated context per request
+    context = await browser.newContext();
+    page = await context.newPage();
 
-    // Set timeout
-    page.setDefaultTimeout(timeout);
-    page.setDefaultNavigationTimeout(timeout);
-
-    // Navigate to URL
-    logger.debug({ url: safeUrl.href }, 'Navigating to URL');
-    await page.goto(safeUrl.href, {
-      waitUntil: 'domcontentloaded', // Wait for DOM to load
-      timeout,
-    });
-
-    // Wait for network to be idle (max 5 seconds)
+    // Apply aggressive resource blocking to reduce load
     try {
-      await page.waitForLoadState('networkidle', { timeout: NETWORK_IDLE_TIMEOUT });
+      await page.route('**/*', (route) => {
+        try {
+          const req = route.request();
+          const type = req.resourceType();
+
+          if (['image', 'media', 'font', 'websocket', 'manifest', 'ping', 'stylesheet'].includes(type)) {
+            return route.abort();
+          }
+        } catch (e) {
+          // If route.request() fails for some requests, continue them
+        }
+
+        return route.continue();
+      });
     } catch (e) {
-      logger.warn({ error: e.message }, 'Network idle timeout (continuing)');
+      logger.debug({ error: e.message }, 'Failed to attach route handler (debug)');
     }
+
+    // Use more aggressive navigation timeout to fail fast
+    const navigationTimeout = Math.min(timeout, 15000);
+    page.setDefaultTimeout(navigationTimeout);
+    page.setDefaultNavigationTimeout(navigationTimeout);
+
+    // Navigate to URL (wait for DOMContentLoaded only)
+    logger.debug({ url: safeUrl.href }, 'Navigating to URL');
+    const gotoStart = Date.now();
+    await page.goto(safeUrl.href, {
+      waitUntil: 'domcontentloaded',
+      timeout: navigationTimeout,
+    });
+    const gotoMs = Date.now() - gotoStart;
+    logger.info({ step: 'page_goto', durationMs: gotoMs }, 'Performance timing');
 
     // Extract page title
     const title = await page.title();
 
-    // Extract visible text content
-    const content = await page.evaluate(() => {
+    // Extract visible text content (with 10s safety timeout)
+    const domStart = Date.now();
+    const domExtractionPromise = page.evaluate(() => {
       // Remove script and style elements
       const scripts = document.querySelectorAll('script, style, noscript');
       scripts.forEach((el) => el.remove());
@@ -83,6 +138,44 @@ export const extractPageContent = async (
 
       return text;
     });
+
+    // Race DOM extraction against a 10s timeout for fallback
+    let content;
+    try {
+      content = await withTimeout(domExtractionPromise, 10000, 'DOM extraction exceeded 10s');
+    } catch (domErr) {
+      const domMs = Date.now() - domStart;
+      logger.warn({ error: domErr.message, durationMs: domMs }, 'DOM extraction timed out, falling back to fetch-based extraction');
+
+      // Lightweight fetch + HTML text fallback
+      try {
+        const fetchStart = Date.now();
+        const resp = await fetch(safeUrl.href, { method: 'GET' });
+        const html = await resp.text();
+        // Minimal HTML to text conversion: remove scripts/styles and tags
+        const stripped = html
+          .replace(/<script[\s\S]*?<\/script>/gi, '')
+          .replace(/<style[\s\S]*?<\/style>/gi, '')
+          .replace(/<noscript[\s\S]*?<\/noscript>/gi, '')
+          .replace(/<!--([\s\S]*?)-->/g, '')
+          .replace(/<[^>]+>/g, '\n')
+          .replace(/\n\s+\n/g, '\n')
+          .split('\n')
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .join('\n');
+
+        content = stripped.substring(0, maxContentLength);
+        const fetchMs = Date.now() - fetchStart;
+        logger.info({ step: 'fallback_fetch', durationMs: fetchMs }, 'Performance timing');
+      } catch (fetchErr) {
+        logger.error({ error: fetchErr.message }, 'Fallback fetch failed');
+        throw fetchErr;
+      }
+    }
+
+    const domMs = Date.now() - domStart;
+    logger.info({ step: 'dom_extraction', durationMs: domMs }, 'Performance timing');
 
     // Limit content length
     let trimmedContent = content.substring(0, maxContentLength);
@@ -129,7 +222,7 @@ export const extractPageContent = async (
 
     throw error;
   } finally {
-    // Clean up browser resources
+    // Close page/context but keep persistent browser running
     if (page) {
       try {
         await page.close();
@@ -138,11 +231,11 @@ export const extractPageContent = async (
       }
     }
 
-    if (browser) {
+    if (context) {
       try {
-        await browser.close();
+        await context.close();
       } catch (e) {
-        logger.warn({ error: e.message }, 'Failed to close browser');
+        logger.warn({ error: e.message }, 'Failed to close context');
       }
     }
   }

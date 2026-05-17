@@ -199,6 +199,69 @@ export const cleanContent = (content, maxLength = 12000) => {
 };
 
 /**
+ * Deduplicate repetitive lines to reduce prompt size while preserving order
+ */
+export const dedupeContent = (content) => {
+  if (!content) return '';
+
+  const seen = new Set();
+  return content
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .filter((line) => {
+      const key = line.length > 200 ? line.slice(0, 200) : line;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .join('\n');
+};
+
+/**
+ * Reduce content by keeping the beginning (hero) and lines matching important keywords.
+ * This is conservative to avoid breaking extraction accuracy while reducing size.
+ */
+export const reduceContent = (content, maxLength = 8000) => {
+  if (!content) return '';
+
+  const originalLength = content.length;
+
+  const lines = content.split('\n').map((l) => l.trim()).filter(Boolean);
+
+  const keywords = ['price', 'pricing', 'product', 'service', 'about', 'contact', 'features', 'pricing', 'subscribe', 'buy', 'order', 'plan', 'headline', 'hero'];
+
+  const matched = [];
+  const remaining = [];
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    if (keywords.some((k) => lower.includes(k))) {
+      matched.push(line);
+    } else {
+      remaining.push(line);
+    }
+  }
+
+  // Keep the top N lines as hero text
+  const head = remaining.slice(0, 30);
+
+  const assembled = [...head, ...matched];
+  let reduced = assembled.join('\n');
+
+  if (reduced.length > maxLength) {
+    reduced = reduced.slice(0, maxLength) + '\n... [truncated]';
+  }
+
+  // If reduction didn't shrink much, fall back to first maxLength chars
+  if (reduced.length > originalLength * 0.9) {
+    reduced = content.slice(0, maxLength) + (content.length > maxLength ? '\n... [truncated]' : '');
+  }
+
+  return reduced;
+};
+
+/**
  * Prepare content and schema for LLM extraction prompt
  */
 export const prepareExtractionPrompt = (content, schema) => {

@@ -7,6 +7,8 @@ import { logger } from '../utils/logger.js';
 import { extractPageContent } from './browser.service.js';
 import {
   cleanContent,
+  dedupeContent,
+  reduceContent,
   prepareExtractionPrompt,
   extractModelResponseText,
   prepareJsonResponseText,
@@ -66,6 +68,7 @@ const openrouter = new OpenAI({
 export const extractFromUrl = async (extractionData) => {
   const extractionId = `ext_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   const startedAt = Date.now();
+  const start = Date.now();
 
   try {
     const { url, schema, options = {} } = extractionData;
@@ -78,19 +81,47 @@ export const extractFromUrl = async (extractionData) => {
     const result = await withTimeout((async () => {
       // Step 1: Extract page content using Playwright
       logger.debug({ extractionId }, 'Fetching page content');
+      const browserStart = Date.now();
       const pageData = await extractPageContent(url, browserTimeout, config.extractionMaxContentLength);
+      const browserTotalMs = Date.now() - browserStart;
+      logger.info({ step: 'browser_total', durationMs: browserTotalMs }, 'Performance timing');
+
+      // Log extracted content length
+      const originalLength = pageData?.content?.length ?? 0;
+      logger.info({ step: 'extracted_content_length', length: originalLength }, 'Performance timing');
+
+      // Step: content cleaning / truncation
+      const cleaningStart = Date.now();
       const cleanedContent = cleanContent(pageData.content, config.extractionMaxContentLength);
+      const cleaningMs = Date.now() - cleaningStart;
+      logger.info({ step: 'content_cleaning', durationMs: cleaningMs }, 'Performance timing');
+      logger.info({ step: 'cleaned_content_length', length: cleanedContent.length }, 'Performance timing');
+
+      // Deduplicate and reduce content before sending to LLM
+      const dedupeStart = Date.now();
+      const deduped = dedupeContent(cleanedContent);
+      const dedupeMs = Date.now() - dedupeStart;
+      logger.info({ step: 'content_dedup', durationMs: dedupeMs }, 'Performance timing');
+
+      const reduceStart = Date.now();
+      const reducedContent = reduceContent(deduped, Math.floor(config.extractionMaxContentLength / 2));
+      const reduceMs = Date.now() - reduceStart;
+      logger.info({ step: 'content_reduction', durationMs: reduceMs }, 'Performance timing');
+      logger.info({ step: 'reduced_content_length', length: reducedContent.length }, 'Performance timing');
+
+      const reductionPct = originalLength > 0 ? Math.round(((originalLength - reducedContent.length) / originalLength) * 100) : 0;
+      logger.info({ step: 'content_reduction_pct', percentage: reductionPct }, 'Performance timing');
 
       // Step 2: Prepare extraction prompt
       logger.debug({ extractionId, schemaKeys: Object.keys(schema || {}) }, 'Preparing prompt (debug)');
 
-      const prompt = prepareExtractionPrompt(cleanedContent, schema);
+      const prompt = prepareExtractionPrompt(reducedContent, schema);
 
       logger.debug({ extractionId, promptLength: prompt.length }, 'Prompt prepared (debug)');
 
       // Step 3: Call OpenRouter API
       logger.debug({ extractionId, model }, 'Calling OpenRouter API');
-      const startTime = Date.now();
+      const openaiStart = Date.now();
 
       const response = await openrouter.chat.completions.create({
         model,
@@ -101,13 +132,12 @@ export const extractFromUrl = async (extractionData) => {
           },
         ],
         temperature: 0,
-        max_tokens: 2000,
+        max_tokens: options.maxTokens || 1000,
         timeout: extractionTimeout,
       });
 
-      const elapsed = Date.now() - startTime;
-
-      logger.debug({ extractionId, elapsed, model }, 'OpenRouter response received (debug)');
+      const openaiDuration = Date.now() - openaiStart;
+      logger.info({ step: 'openai_request', durationMs: openaiDuration }, 'Performance timing');
 
       // Step 4: Parse and validate response
       const rawResponseText = extractModelResponseText(response);
@@ -118,17 +148,26 @@ export const extractFromUrl = async (extractionData) => {
 
       let extractedData;
 
+      // JSON parsing timing
+      const parseStart = Date.now();
       try {
         extractedData = parseJsonResponse(cleanedResponseText);
       } catch (parseError) {
         logger.debug({ extractionId, parseError: parseError.message }, 'JSON parse failure (debug)');
+        const parseMs = Date.now() - parseStart;
+        logger.info({ step: 'json_parsing', durationMs: parseMs }, 'Performance timing');
 
         throw parseError;
       }
+      const parseMs = Date.now() - parseStart;
+      logger.info({ step: 'json_parsing', durationMs: parseMs }, 'Performance timing');
 
       logger.debug({ extractionId, parsedJsonKeys: Object.keys(extractedData || {}) }, 'Parsed JSON object (debug)');
 
+      const validationStart = Date.now();
       const validatedData = validateAgainstSchema(extractedData, schema);
+      const validationMs = Date.now() - validationStart;
+      logger.info({ step: 'schema_validation', durationMs: validationMs }, 'Performance timing');
       // Always use validated data - strict schema conformance required
       const finalData = validatedData;
 
@@ -136,6 +175,9 @@ export const extractFromUrl = async (extractionData) => {
 
       // Step 5: Format usage info
       const usage = formatUsageInfo(response.usage, model);
+
+      // Final response assembly timing
+      const assemblyStart = Date.now();
 
       const extractionResult = {
         extractionId,
@@ -149,6 +191,18 @@ export const extractFromUrl = async (extractionData) => {
         timestamp: new Date().toISOString(),
       };
 
+      const assemblyMs = Date.now() - assemblyStart;
+      logger.info({ step: 'final_response_assembly', durationMs: assemblyMs }, 'Performance timing');
+
+      // Log usage and final response size
+      logger.info({ step: 'tokens_used', tokens: usage?.tokensUsed ?? 0 }, 'Performance timing');
+      try {
+        const finalSize = JSON.stringify(extractionResult).length;
+        logger.info({ step: 'final_response_size_bytes', size: finalSize }, 'Performance timing');
+      } catch (e) {
+        logger.debug({ error: e.message }, 'Failed to compute final response size (debug)');
+      }
+
       logger.debug({ extractionId, extractionResultSummary: { extractionId, source: extractionResult.source, timestamp: extractionResult.timestamp } }, 'Final extraction service return value (debug)');
 
       return extractionResult;
@@ -158,6 +212,9 @@ export const extractFromUrl = async (extractionData) => {
       { extractionId, durationMs: Date.now() - startedAt, tokensUsed: result.usage.tokensUsed },
       'Extraction completed successfully'
     );
+
+    // Total request duration (from function entry)
+    logger.info({ step: 'total_request', durationMs: Date.now() - start }, 'Performance timing');
 
     return result;
   } catch (error) {
