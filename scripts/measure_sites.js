@@ -1,6 +1,4 @@
-import fs from 'fs';
-import path from 'path';
-import { extractPageContent } from '../src/services/browser.service.js';
+import { extractFromUrl } from '../src/services/extraction.service.js';
 
 const sites = [
   'https://novares.in',
@@ -8,16 +6,29 @@ const sites = [
   'https://github.com',
 ];
 
+const schema = {
+  title: 'string',
+  description: 'string',
+};
+
 const run = async () => {
   for (const site of sites) {
     const start = Date.now();
-    console.log(`\n--- Fetching ${site}`);
+    console.log(`\n--- Extracting ${site}`);
     try {
-      const result = await extractPageContent(site, 15000, 200000);
+      const result = await extractFromUrl({
+        url: site,
+        schema,
+        options: {
+          timeout: 30000,
+          maxTokens: 500,
+        },
+      });
       const duration = Date.now() - start;
       console.log(`Site: ${site}`);
-      console.log(`Title: ${result.title}`);
-      console.log(`Content length: ${result.content.length}`);
+      console.log(`Extraction method: ${result.extractionMethod}`);
+      console.log(`Source title: ${result.source?.title || ''}`);
+      console.log(`Content length: ${JSON.stringify(result.data || {}).length}`);
       console.log(`Duration ms (total): ${duration}`);
     } catch (e) {
       console.error(`Error fetching ${site}:`, e.message);

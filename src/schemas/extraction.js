@@ -43,6 +43,7 @@ export const extractionResponseSchema = z.object({
   data: z.record(z.any()).optional(),
   error: z.string().optional(),
   extractionId: z.string(),
+  extractionMethod: z.enum(['fast-html', 'playwright']).optional(),
   timestamp: z.string(),
 });
 

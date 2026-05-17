@@ -5,6 +5,7 @@
 import OpenAI from 'openai';
 import { logger } from '../utils/logger.js';
 import { extractPageContent } from './browser.service.js';
+import { extractFastPageContent } from './fastExtraction.service.js';
 import {
   cleanContent,
   dedupeContent,
@@ -75,16 +76,66 @@ export const extractFromUrl = async (extractionData) => {
     const model = options.model || 'openai/gpt-4o-mini';
     const extractionTimeout = options.timeout || config.extractionTimeout;
     const browserTimeout = Math.min(config.pageGotoTimeout, extractionTimeout);
+    let extractionMethod = 'fast-html';
+    let fastExtractionResult = null;
+    let pageData = null;
+    let fallbackLogged = false;
 
     logger.info({ extractionId, url }, 'Starting extraction pipeline');
 
     const result = await withTimeout((async () => {
-      // Step 1: Extract page content using Playwright
-      logger.debug({ extractionId }, 'Fetching page content');
-      const browserStart = Date.now();
-      const pageData = await extractPageContent(url, browserTimeout, config.extractionMaxContentLength);
-      const browserTotalMs = Date.now() - browserStart;
-      logger.info({ step: 'browser_total', durationMs: browserTotalMs }, 'Performance timing');
+      // Step 1: Try fast HTML extraction first
+      logger.debug({ extractionId }, 'Attempting fast HTML extraction');
+      const fastStart = Date.now();
+
+      try {
+        fastExtractionResult = await extractFastPageContent(url, config.extractionMaxContentLength);
+      } catch (fastError) {
+        logger.warn(
+          { extractionId, error: fastError.message },
+          'Fast extraction failed, falling back to Playwright'
+        );
+        logger.info({ step: 'fallback_to_playwright' }, 'Performance timing');
+        fallbackLogged = true;
+      }
+
+      if (fastExtractionResult) {
+        const fastDurationMs = Date.now() - fastStart;
+        logger.info({ step: 'fast_extraction_result_ready', durationMs: fastDurationMs }, 'Performance timing');
+      }
+
+      const usePlaywright = !fastExtractionResult || fastExtractionResult.shouldFallbackToPlaywright;
+
+      if (usePlaywright) {
+        if (fastExtractionResult?.fallbackReason) {
+          logger.info(
+            { step: 'fallback_to_playwright', reason: fastExtractionResult.fallbackReason },
+            'Performance timing'
+          );
+          fallbackLogged = true;
+        } else if (!fallbackLogged) {
+          logger.info({ step: 'fallback_to_playwright' }, 'Performance timing');
+          fallbackLogged = true;
+        }
+
+        // Step 1b: Fallback to Playwright extraction only when fast HTML quality is poor
+        logger.debug({ extractionId }, 'Fetching page content with Playwright fallback');
+        const browserStart = Date.now();
+        pageData = await extractPageContent(url, browserTimeout, config.extractionMaxContentLength);
+        const browserTotalMs = Date.now() - browserStart;
+        logger.info({ step: 'browser_total', durationMs: browserTotalMs }, 'Performance timing');
+        extractionMethod = 'playwright';
+      } else {
+        pageData = {
+          url: fastExtractionResult.url,
+          title: fastExtractionResult.title,
+          content: fastExtractionResult.content,
+          extractedAt: fastExtractionResult.extractedAt,
+          metadata: fastExtractionResult.metadata,
+          description: fastExtractionResult.description,
+        };
+        extractionMethod = 'fast-html';
+      }
 
       // Log extracted content length
       const originalLength = pageData?.content?.length ?? 0;
@@ -182,6 +233,7 @@ export const extractFromUrl = async (extractionData) => {
       const extractionResult = {
         extractionId,
         success: true,
+        extractionMethod,
         data: finalData,
         source: {
           url: pageData.url,
@@ -202,6 +254,18 @@ export const extractFromUrl = async (extractionData) => {
       } catch (e) {
         logger.debug({ error: e.message }, 'Failed to compute final response size (debug)');
       }
+
+      logger.info(
+        {
+          step: 'optimization_summary',
+          extractionMethod,
+          usedFallback: extractionMethod === 'playwright',
+          originalLength,
+          reducedLength: reducedContent.length,
+          reductionPct,
+        },
+        'Performance timing'
+      );
 
       logger.debug({ extractionId, extractionResultSummary: { extractionId, source: extractionResult.source, timestamp: extractionResult.timestamp } }, 'Final extraction service return value (debug)');
 
